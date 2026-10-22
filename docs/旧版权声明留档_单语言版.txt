@@ -1,0 +1,18 @@
+﻿RAINBOW MC 启动器 软件许可与项目声明
+
+本文件已不再被安装程序使用。
+安装程序的免责条款按安装器语言自动切换，对应三个文件：
+
+    build\license_zh_CN.txt    简体中文
+    build\license_zh_TW.txt    繁體中文
+    build\license_en_US.txt    English
+
+映射关系写在 build\installer.nsh 的 customPageAfterChangeDir 里
+（LicenseLangString 2052 / 1028 / 1033）。
+
+⚠ 这三个文件必须是 UTF-8 **带 BOM**，
+  否则 NSIS 会按 GBK 解释，中文全变乱码。
+
+修改条款时请同时改三份，并保持本说明与实际文件一致。
+
+Copyright (c) 2026 RAINBOW DOOR 彩虹门社团
