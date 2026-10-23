@@ -102,7 +102,7 @@ export function LoginOffline({
   return (
     <div className="overlay">
       <div className="modal">
-        <h2>{t('accounts.offline')}</h2>
+        <h2>{t('accounts.club')}</h2>
         <p style={{ marginBottom: 16 }}>{t('accounts.clubSsoHint')}</p>
         {mockMode && (
           <div className="hint-banner" style={{ marginBottom: 14 }}>
@@ -120,7 +120,7 @@ export function LoginOffline({
               if (e.key === 'Enter') void submit()
             }}
           />
-          <span className="hint">{t('accounts.nameRule')}</span>
+          <span className="hint">{t('accounts.nameRule')} · {t('accounts.clubNameHint')}</span>
         </div>
         {error && <div style={{ color: 'var(--err)', fontSize: 12 }}>{error}</div>}
         <div className="modal-actions">
@@ -129,7 +129,7 @@ export function LoginOffline({
           </button>
           <button
             className="btn primary"
-            disabled={busy || !name.trim()}
+            disabled={busy}
             onClick={() => void submit()}
           >
             {busy ? t('accounts.waitingBrowser') : t('accounts.authorizeAndLogin')}
@@ -293,6 +293,113 @@ export function LaunchOverlay({
               {t('launch.forceStop')}
             </button>
           )}
+          <button className="btn" onClick={onClose}>
+            {t('common.close')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 纯离线登录：不连接任何服务器，填个昵称就能玩。
+ * 与「社团账号登录」的区别是它不需要社团授权，适合单机。
+ */
+export function LocalLogin({ onClose, onDone }: { onClose: () => void; onDone: () => void }): React.ReactElement {
+  const { t } = useI18n()
+  const [name, setName] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (): Promise<void> => {
+    setBusy(true)
+    setError('')
+    const r = await window.api.account.localLogin(name.trim())
+    setBusy(false)
+    if (!r.ok) {
+      setError(r.message || r.errorCode || 'error')
+      return
+    }
+    onDone()
+  }
+
+  return (
+    <div className="overlay">
+      <div className="modal">
+        <h2>{t('accounts.local')}</h2>
+        <p style={{ marginBottom: 16 }}>{t('accounts.localHint')}</p>
+        <div className="field">
+          <label>{t('accounts.offlineName')}</label>
+          <input
+            className="input"
+            value={name}
+            placeholder="Steve"
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void submit()
+            }}
+          />
+          <span className="hint">{t('accounts.nameRule')}</span>
+        </div>
+        {error && <div style={{ color: 'var(--err)', fontSize: 12 }}>{error}</div>}
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>
+            {t('common.cancel')}
+          </button>
+          <button className="btn primary" disabled={busy || !name.trim()} onClick={() => void submit()}>
+            {busy ? t('common.loading') : t('accounts.localStart')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+/** 账号列表：在已保存的账号之间切换（切换不会清掉各账号的登录状态） */
+export function AccountsDialog({
+  accounts,
+  activeId,
+  onSwitch,
+  onRemove,
+  onClose
+}: {
+  accounts: { id: string; name: string; mode: string; uuid: string }[]
+  activeId?: string
+  onSwitch: (id: string) => void
+  onRemove: (id: string) => void
+  onClose: () => void
+}): React.ReactElement {
+  const { t } = useI18n()
+  const label = (mode: string): string =>
+    mode === 'microsoft' ? t('accounts.microsoft') : mode === 'club' ? t('accounts.club') : t('accounts.local')
+
+  return (
+    <div className="overlay">
+      <div className="modal">
+        <h2>{t('accounts.login')}</h2>
+        <p style={{ marginBottom: 14 }}>{t('accounts.switchHint')}</p>
+        <div className="vlist" style={{ maxHeight: 320, overflow: 'auto' }}>
+          {accounts.map((a) => (
+            <div className="vrow" key={a.id} style={{ alignItems: 'center' }}>
+              <span className="vid" style={{ minWidth: 140 }}>{a.name}</span>
+              <span className="tag">{label(a.mode)}</span>
+              <span className="vmeta mono">{a.uuid.slice(0, 8)}</span>
+              <span className="vspacer" />
+              {a.id === activeId ? (
+                <span className="tag ok">{t('accounts.current')}</span>
+              ) : (
+                <button className="btn sm" onClick={() => onSwitch(a.id)}>
+                  {t('accounts.switch')}
+                </button>
+              )}
+              <button className="btn sm ghost" onClick={() => onRemove(a.id)}>
+                {t('common.delete')}
+              </button>
+            </div>
+          ))}
+          {!accounts.length && <div className="empty">{t('accounts.notLoggedIn')}</div>}
+        </div>
+        <div className="modal-actions">
           <button className="btn" onClick={onClose}>
             {t('common.close')}
           </button>

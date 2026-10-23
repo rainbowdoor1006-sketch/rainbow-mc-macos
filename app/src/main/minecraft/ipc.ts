@@ -8,7 +8,7 @@ import type { AccountInfo, AppSettings, GameProject } from '@shared/types'
 import type { InstallProgress, VersionSummary } from '@shared/mclib'
 import { getManifest, getVersionJson, installVersion, listInstalledVersions } from './installer'
 import { ensureJava, findInstalledJava } from './java'
-import { makeOfflineAccount, isValidOfflineName } from './auth'
+import { makeLocalAccount, makeOfflineAccount, isValidOfflineName } from './auth'
 import { microsoftLogin, microsoftLoginDevice, microsoftLoginPublic, isLikelyClientId } from './msauth'
 import { installFabric, installForge, installNeoForge, installQuilt, listLoaders, loaderSupport } from './loaders'
 import { ensureAssets, ensureVersionFiles } from './installer'
@@ -363,10 +363,7 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
   ipcMain.handle('account:list', () => state().accounts)
 
   ipcMain.handle('account:offlineLogin', async (_e, payload: { name: string; clubUser?: string; clubPass?: string }) => {
-    const name = (payload?.name || '').trim()
-    if (!isValidOfflineName(name)) {
-      return { ok: false, errorCode: 'E9002', message: '昵称只能是 3-16 位字母、数字或下划线' }
-    }
+    const typedName = (payload?.name || '').trim()
     const s = state()
 
     // 先过社团网站授权（2026-10-20：改为跳浏览器授权，不再在这里填账号密码）
@@ -375,7 +372,17 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
       return { ok: false, errorCode: auth.errorCode || 'E9001', message: auth.message || '社团授权失败' }
     }
 
+    // 昵称留空时，用社团账号名自动生成一个合法的游戏内名字
+    const fallback = (auth.user?.name || '')
+      .replace(/[^A-Za-z0-9_]/g, '')
+      .slice(0, 16)
+    const name = typedName || (fallback.length >= 3 ? fallback : 'Player' + Math.floor(Math.random() * 900 + 100))
+    if (!isValidOfflineName(name)) {
+      return { ok: false, errorCode: 'E9002', message: '昵称只能是 3-16 位字母、数字或下划线' }
+    }
+
     const account = makeOfflineAccount(name, { id: auth.user!.id, name: auth.user!.name })
+    account.mode = 'club'
     account.clubToken = auth.token
     account.clubEmail = (auth.user as { email?: string }).email
     account.clubExpiresAt = Date.now() + (auth.expiresIn ?? 2592000) * 1000
@@ -386,6 +393,20 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
     return { ok: true, account }
   })
 
+  // 纯离线登录：不连接任何服务器，直接创建本地账号
+  ipcMain.handle('account:localLogin', async (_e, payload: { name: string }) => {
+    const name = (payload?.name || '').trim()
+    if (!isValidOfflineName(name)) {
+      return { ok: false, errorCode: 'E9002', message: '昵称只能是 3-16 位字母、数字或下划线' }
+    }
+    const s = state()
+    const account = makeLocalAccount(name)
+    const accounts = [...s.accounts.filter((a) => a.id !== account.id), account]
+    setAccounts(accounts)
+    setActive({ activeAccountId: account.id })
+    persist()
+    return { ok: true, account }
+  })
   // 社团接口校验同步停用
   ipcMain.handle('account:clubCheck', async () => {
     // 2026-10-20：改为跳浏览器授权，参数不再使用（保留 IPC 名以兼容渲染进程）
@@ -574,8 +595,8 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
     if (!project) return { ok: false, errorCode: 'E1002', message: '项目不存在' }
     if (!account) return { ok: false, errorCode: 'E9001', message: '未登录账号' }
 
-    // 社团账号：每次启动前强制校验令牌，失效就终止启动
-    if (account.mode === 'offline') {
+    // 社团账号：每次启动前强制校验令牌，失效就终止启动；纯离线账号不校验
+    if (account.mode === 'club') {
       if (!account.clubUserId) {
         return { ok: false, errorCode: 'E9001', message: '社团账号未授权，请重新登录' }
       }

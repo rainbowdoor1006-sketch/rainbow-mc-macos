@@ -29,3 +29,16 @@ export function makeOfflineAccount(name: string, club?: { id: string; name: stri
 export function isValidOfflineName(name: string): boolean {
   return /^[A-Za-z0-9_]{3,16}$/.test(name)
 }
+
+/** 纯离线账号（不连社团、不连微软，仅本地游玩） */
+export function makeLocalAccount(name: string): AccountInfo {
+  const uuid = offlineUuid(name + '|local|' + Math.random().toString(36).slice(2))
+  return {
+    id: 'local-' + uuid,
+    name,
+    uuid,
+    mode: 'offline',
+    accessToken: '0',
+    createdAt: Date.now()
+  }
+}

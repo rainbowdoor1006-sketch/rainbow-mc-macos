@@ -65,6 +65,8 @@ const api = {
   },
   account: {
     list: (): Promise<import('@shared/types').AccountInfo[]> => ipcRenderer.invoke('account:list'),
+    localLogin: (name: string): Promise<{ ok: boolean; errorCode?: string; message?: string; account?: import('@shared/types').AccountInfo }> =>
+      ipcRenderer.invoke('account:localLogin', { name }),
     offlineLogin: (
       name: string,
       clubUser?: string,

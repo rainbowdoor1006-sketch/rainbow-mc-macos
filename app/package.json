@@ -1,6 +1,6 @@
 {
   "name": "rainbow-mc",
-  "version": "0.2.28",
+  "version": "0.2.33",
   "description": "RAINBOW MC — Minecraft Launcher",
   "main": "out/main/index.js",
   "author": "RAINBOW MC",

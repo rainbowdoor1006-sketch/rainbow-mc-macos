@@ -58,6 +58,8 @@ function fixStalePaths(s: Partial<AppState>): void {
     if (ap?.backgroundFile) ap.backgroundFile = rewrite(ap.backgroundFile) ?? ap.backgroundFile
   }
   for (const a of s.accounts ?? []) {
+    // 老数据把社团账号记成 offline，这里升级为 club（纯离线保持 offline）
+    if ((a.mode as string) === 'offline' && a.clubToken) a.mode = 'club'
     if (!a.avatar) continue
     const fixed = rewrite(a.avatar)
     if (fixed) a.avatar = fixed
@@ -119,6 +121,17 @@ export function state(): AppState {
         cache.settings.clubApi = { ...DEFAULT_SETTINGS.clubApi }
         persist()
       }
+      // 修正旧路径 / 头像来源（之前定义了但没调用）
+      fixStalePaths(cache)
+      // 账号模式迁移：带社团令牌的离线账号 → club（纯离线保持 offline）
+      let modeChanged = false
+      for (const a of cache.accounts) {
+        if ((a.mode as string) === 'offline' && a.clubToken) {
+          a.mode = 'club'
+          modeChanged = true
+        }
+      }
+      if (modeChanged) persist()
       return cache
     }
   } catch {

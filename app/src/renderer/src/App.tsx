@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { I18nProvider, localeForRegion, useI18n } from '@/i18n'
 import type { AppSettings, AppState, LocaleCode, RegionCode } from '@shared/types'
 import { MainlandNotice, RegionPicker } from '@/components/RegionGate'
-import { LaunchError, LaunchOverlay, LoginOffline, MsLogin } from '@/components/Dialogs'
+import { AccountsDialog, LaunchError, LaunchOverlay, LocalLogin, LoginOffline, MsLogin } from '@/components/Dialogs'
 import { InstancePanel } from '@/components/InstancePanel'
 import { ProjectList } from '@/components/ProjectList'
 import { LoginGate } from '@/components/LoginGate'
@@ -21,7 +21,7 @@ import { Settings } from '@/pages/Settings'
 import { More } from '@/pages/More'
 
 export type Page = 'launch' | 'download' | 'library' | 'settings' | 'more'
-type Dialog = 'none' | 'project' | 'login-offline' | 'login-ms' | 'instance' | 'terms'
+type Dialog = 'none' | 'project' | 'login-club' | 'login-local' | 'login-ms' | 'accounts' | 'instance' | 'terms'
 
 export default function App(): React.ReactElement {
   const [state, setState] = useState<AppState | null>(null)
@@ -187,11 +187,13 @@ export default function App(): React.ReactElement {
         const active = state.accounts.find((a) => a.id === state.activeAccountId)
         if (!active) return false
         if (active.mode === 'microsoft') return !!active.accessToken
-        // 社团网站授权登录
-        return !!active.clubToken
+        if (active.mode === 'club') return !!active.clubToken
+        // 纯离线账号：不需要任何令牌
+        return true
       })() && (
         <LoginGate
-          onClubLogin={() => setDialog('login-offline')}
+          onClubLogin={() => setDialog('login-club')}
+          onLocalLogin={() => setDialog('login-local')}
           onMsLogin={() => setDialog('login-ms')}
           onTerms={() => setDialog('terms')}
         />
@@ -208,7 +210,22 @@ export default function App(): React.ReactElement {
         onLaunch={() => void doLaunch()}
         onPickProject={() => setDialog('project')}
         onOpenInstance={() => setDialog('instance')}
-        onLogin={(m) => setDialog(m === 'offline' ? 'login-offline' : 'login-ms')}
+        onOpenAccounts={() => setDialog('accounts')}
+        onLogin={(m) => {
+          // 已经登录过同类账号 → 直接切换过去，不重新走登录流程
+          const saved = state.accounts.find((a) =>
+            m === 'microsoft'
+              ? a.mode === 'microsoft' && !!a.accessToken
+              : m === 'club'
+                ? a.mode === 'club' && !!a.clubToken
+                : a.mode === 'offline'
+          )
+          if (saved) {
+            void window.api.account.setActive(saved.id).then(() => refresh())
+            return
+          }
+          setDialog(m === 'microsoft' ? 'login-ms' : m === 'club' ? 'login-club' : 'login-local')
+        }}
         onRefresh={refresh}
       />
 
@@ -225,15 +242,40 @@ export default function App(): React.ReactElement {
           }}
         />
       )}
+      {dialog === 'accounts' && (
+        <AccountsDialog
+          accounts={state.accounts.map((a) => ({ id: a.id, name: a.name, mode: a.mode, uuid: a.uuid }))}
+          activeId={state.activeAccountId}
+          onSwitch={(id) => {
+            void window.api.account.setActive(id).then(() => {
+              setDialog('none')
+              refresh()
+            })
+          }}
+          onRemove={(id) => {
+            void window.api.account.remove(id).then(() => refresh())
+          }}
+          onClose={() => setDialog('none')}
+        />
+      )}
       {dialog === 'terms' && (
         <TermsDialog
           onCancel={() => setDialog('none')}
         />
       )}
 
-      {dialog === 'login-offline' && (
+      {dialog === 'login-club' && (
         <LoginOffline
           mockMode={state.settings.clubApi.mockMode}
+          onClose={() => setDialog('none')}
+          onDone={() => {
+            setDialog('none')
+            refresh()
+          }}
+        />
+      )}
+      {dialog === 'login-local' && (
+        <LocalLogin
           onClose={() => setDialog('none')}
           onDone={() => {
             setDialog('none')
@@ -347,6 +389,7 @@ function AppShell({
   onPickProject,
   onOpenInstance,
   onLogin,
+  onOpenAccounts,
   onRefresh
 }: {
   state: AppState
@@ -360,7 +403,8 @@ function AppShell({
   onLaunch: () => void
   onPickProject: () => void
   onOpenInstance: () => void
-  onLogin: (m: 'offline' | 'microsoft') => void
+  onLogin: (m: 'club' | 'local' | 'microsoft') => void
+  onOpenAccounts: () => void
   onRefresh: () => void
 }): React.ReactElement {
   const { t } = useI18n()
@@ -379,6 +423,7 @@ function AppShell({
           onPickProject={onPickProject}
           onOpenInstance={onOpenInstance}
           onLogin={onLogin}
+        onOpenAccounts={onOpenAccounts}
           onRefresh={onRefresh}
         />
         <div className="content">

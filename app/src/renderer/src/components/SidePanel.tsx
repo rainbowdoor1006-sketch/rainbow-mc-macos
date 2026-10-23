@@ -14,6 +14,7 @@ export function SidePanel({
   onPickProject,
   onOpenInstance,
   onLogin,
+  onOpenAccounts,
   onRefresh
 }: {
   state: AppState
@@ -24,7 +25,8 @@ export function SidePanel({
   onLaunch: () => void
   onPickProject: () => void
   onOpenInstance: () => void
-  onLogin: (mode: 'offline' | 'microsoft') => void
+  onLogin: (mode: 'club' | 'local' | 'microsoft') => void
+  onOpenAccounts: () => void
   onRefresh?: () => void
 }): React.ReactElement {
   const { t } = useI18n()
@@ -70,8 +72,11 @@ export function SidePanel({
         >
           {t('accounts.microsoft')}
         </button>
-        <button className={'seg-btn' + (mode === 'offline' ? ' active' : '')} onClick={() => onLogin('offline')}>
-          {t('accounts.offline')}
+        <button className={'seg-btn' + (mode === 'club' ? ' active' : '')} onClick={() => onLogin('club')}>
+          {t('accounts.club')}
+        </button>
+        <button className={'seg-btn' + (mode === 'offline' ? ' active' : '')} onClick={() => onLogin('local')}>
+          {t('accounts.local')}
         </button>
       </div>
 
@@ -88,12 +93,12 @@ export function SidePanel({
             (activeAccount?.name ?? '?').slice(0, 1).toUpperCase()
           )}
         </div>
-        <div className="avatar-name">{activeAccount?.name ?? t('accounts.notLoggedIn')}</div>
+        <div className="avatar-name" onClick={onOpenAccounts} style={{ cursor: 'pointer' }} title={t('accounts.switch')}>{activeAccount?.name ?? t('accounts.notLoggedIn')}</div>
         <div className="avatar-sub">
           {activeAccount ? (
             <span className="mono">{activeAccount.uuid.slice(0, 8)}</span>
           ) : (
-            <span onClick={() => onLogin('offline')} style={{ cursor: 'pointer' }}>
+            <span onClick={() => onLogin('local')} style={{ cursor: 'pointer' }}>
               {t('accounts.loginHint')}
             </span>
           )}

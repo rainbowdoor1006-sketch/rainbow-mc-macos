@@ -33,7 +33,7 @@ export interface RegionInfo {
   isMainlandChina: boolean
 }
 
-export type LoginMode = 'offline' | 'microsoft'
+export type LoginMode = 'offline' | 'club' | 'microsoft'
 
 export interface AccountInfo {
   id: string

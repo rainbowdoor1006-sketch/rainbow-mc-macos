@@ -8,10 +8,12 @@ import { IconPlay, IconUser } from './Icons'
  */
 export function LoginGate({
   onClubLogin,
+  onLocalLogin,
   onMsLogin,
   onTerms
 }: {
   onClubLogin: () => void
+  onLocalLogin: () => void
   onMsLogin: () => void
   onTerms: () => void
 }): React.ReactElement {
@@ -46,6 +48,9 @@ export function LoginGate({
           <button className="btn primary lg" onClick={onMsLogin}>
             <IconPlay />
             {t('gate.microsoft')}
+          </button>
+          <button className="btn ghost lg" onClick={onLocalLogin}>
+            {t('gate.local')}
           </button>
         </div>
 
