@@ -1,12 +1,13 @@
 import React from 'react'
 import { useI18n } from '@/i18n'
 import type { Page } from '@/App'
-import { IconDownload, IconFolder, IconGear, IconMore, IconPlay } from './Icons'
+import { IconDownload, IconFolder, IconGear, IconLink, IconMore, IconPlay } from './Icons'
 
 const TABS: { id: Page; label: string; icon: React.FC<{ className?: string }> }[] = [
   { id: 'launch', label: 'nav.launch', icon: IconPlay },
   { id: 'download', label: 'nav.download', icon: IconDownload },
   { id: 'library', label: 'nav.library', icon: IconFolder },
+  { id: 'multiplayer', label: 'nav.multiplayer', icon: IconLink },
   { id: 'settings', label: 'nav.settings', icon: IconGear },
   { id: 'more', label: 'nav.more', icon: IconMore }
 ]

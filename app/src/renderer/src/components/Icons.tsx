@@ -120,3 +120,12 @@ export function IconPlus(_p: IconProps): React.ReactElement {
 }
 
 export type { IconProps }
+
+export function IconLink(p: IconProps): React.ReactElement {
+  return (
+    <svg {...base}>
+      <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L10.7 5.23" />
+      <path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07l1.42-1.42" />
+    </svg>
+  )
+}

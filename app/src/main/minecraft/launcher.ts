@@ -168,6 +168,9 @@ export async function buildCommand(
   jvm.push(`-Djava.library.path=${natives}`)
   jvm.push('-Dminecraft.launcher.brand=RAINBOWMC', '-Dminecraft.launcher.version=0.1.0')
   jvm.push('-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8')
+  // 部分模组会在构造阶段直接访问 GitHub raw / 自家接口，Java 默认连接超时是「无限」，
+  // 在国内网络下会卡住整个模组加载（表现为启动卡死、无报错）。强制 5 秒超时让它快速失败。
+  jvm.push('-Dsun.net.client.defaultConnectTimeout=5000', '-Dsun.net.client.defaultReadTimeout=5000')
 
   const argList = json.arguments?.jvm
   let hasModulePath = false

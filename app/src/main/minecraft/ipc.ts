@@ -13,6 +13,7 @@ import { microsoftLogin, microsoftLoginDevice, microsoftLoginPublic, isLikelyCli
 import { installFabric, installForge, installNeoForge, installQuilt, listLoaders, loaderSupport } from './loaders'
 import { ensureAssets, ensureVersionFiles } from './installer'
 import { downloadCfFiles } from './cf'
+import * as mp from './multiplayer'
 import {
   getProjectInfo,
   getVersion,
@@ -359,6 +360,32 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
     }
   })
 
+
+  /* ---------- 联机（Terracotta） ---------- */
+  ipcMain.handle('mp:status', () => mp.currentStatus())
+  ipcMain.handle('mp:binary', () => mp.binaryInfo())
+  ipcMain.handle('mp:install', async () => {
+    return mp.ensureTerracotta((message) => emit('mp:progress', { message }))
+  })
+  ipcMain.handle('mp:host', async (_e, player: string) => {
+    const r = await mp.host(player)
+    emit('mp:state', mp.currentStatus())
+    return r
+  })
+  ipcMain.handle('mp:join', async (_e, payload: { code: string; player: string }) => {
+    const r = await mp.joinRoom(payload.code, payload.player)
+    emit('mp:state', mp.currentStatus())
+    return r
+  })
+  ipcMain.handle('mp:idle', async () => {
+    await mp.idle()
+    return mp.currentStatus()
+  })
+  ipcMain.handle('mp:stop', async () => {
+    await mp.stop()
+    return mp.currentStatus()
+  })
+  mp.onStatus((s) => emit('mp:state', s))
   /* ---------- 账号 ---------- */
   ipcMain.handle('account:list', () => state().accounts)
 

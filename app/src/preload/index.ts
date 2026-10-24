@@ -63,6 +63,27 @@ const api = {
       return () => ipcRenderer.removeListener('mc:running', handler)
     }
   },
+
+  mp: {
+    status: (): Promise<unknown> => ipcRenderer.invoke('mp:status'),
+    binary: (): Promise<{ path: string; exists: boolean; sizeMB: number }> => ipcRenderer.invoke('mp:binary'),
+    install: (): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('mp:install'),
+    host: (player: string): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('mp:host', player),
+    join: (code: string, player: string): Promise<{ ok: boolean; message?: string }> =>
+      ipcRenderer.invoke('mp:join', { code, player }),
+    idle: (): Promise<unknown> => ipcRenderer.invoke('mp:idle'),
+    stop: (): Promise<unknown> => ipcRenderer.invoke('mp:stop'),
+    onState: (cb: (s: unknown) => void): (() => void) => {
+      const handler = (_e: unknown, s: unknown): void => cb(s)
+      ipcRenderer.on('mp:state', handler as never)
+      return () => ipcRenderer.removeListener('mp:state', handler as never)
+    },
+    onProgress: (cb: (p: { message?: string }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { message?: string }): void => cb(p)
+      ipcRenderer.on('mp:progress', handler as never)
+      return () => ipcRenderer.removeListener('mp:progress', handler as never)
+    }
+  },
   account: {
     list: (): Promise<import('@shared/types').AccountInfo[]> => ipcRenderer.invoke('account:list'),
     localLogin: (name: string): Promise<{ ok: boolean; errorCode?: string; message?: string; account?: import('@shared/types').AccountInfo }> =>

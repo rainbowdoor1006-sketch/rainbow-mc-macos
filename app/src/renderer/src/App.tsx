@@ -11,6 +11,7 @@ import { AppearanceLayer } from '@/components/AppearanceLayer'
 import { DownloadOrb } from '@/components/DownloadOrb'
 import { DropImport } from '@/components/DropImport'
 import { LibraryPage } from '@/pages/LibraryPage'
+import { Multiplayer } from '@/pages/Multiplayer'
 import { UpdateDialog, type LatestInfoView, type UpdateMode } from '@/components/UpdateDialog'
 import { TopBar } from '@/components/TopBar'
 import { SidePanel } from '@/components/SidePanel'
@@ -20,7 +21,7 @@ import { Download } from '@/pages/Download'
 import { Settings } from '@/pages/Settings'
 import { More } from '@/pages/More'
 
-export type Page = 'launch' | 'download' | 'library' | 'settings' | 'more'
+export type Page = 'launch' | 'download' | 'library' | 'multiplayer' | 'settings' | 'more'
 type Dialog = 'none' | 'project' | 'login-club' | 'login-local' | 'login-ms' | 'accounts' | 'instance' | 'terms'
 
 export default function App(): React.ReactElement {
@@ -441,6 +442,9 @@ function AppShell({
               )}
               {page === 'download' && <Download state={state} />}
               {page === 'library' && <LibraryPage />}
+              {page === 'multiplayer' && (
+                <Multiplayer playerName={state.accounts.find((a) => a.id === state.activeAccountId)?.name || 'Player'} />
+              )}
               {page === 'settings' && (
                 <Settings settings={state.settings} onChange={applySettings} onPickRegion={onPickRegion} onRefresh={onRefresh} />
               )}

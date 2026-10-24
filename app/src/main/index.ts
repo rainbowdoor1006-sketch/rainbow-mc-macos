@@ -387,6 +387,10 @@ app.whenReady().then(() => {
   })
 })
 
+app.on('before-quit', () => {
+  // 退出前关掉联机服务，避免残留 terracotta 进程
+  void import('./minecraft/multiplayer').then((mp) => mp.stop()).catch(() => undefined)
+})
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })

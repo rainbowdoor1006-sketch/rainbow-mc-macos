@@ -3,7 +3,8 @@
  * 生成「爱发电动态 / B站简介 / 论坛帖」的现成草稿。
  * 用法：node tools\make-post-draft.mjs [--version 0.2.33] [--notes "修复xxx；新增yyy"]
  *
- * 输出：_promo\发布草稿\爱发电-<ver>.md、B站简介-<ver>.txt、论坛帖-<ver>.md
+ * 下载只写夸克网盘链接（不写网站直链）。
+ * 可用环境变量覆盖：QUARK_LINK / QUARK_CODE
  */
 import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -18,28 +19,16 @@ const version = (process.argv.includes('--version')
 const notesIdx = process.argv.indexOf('--notes')
 const notes = notesIdx > -1 ? process.argv[notesIdx + 1] : ''
 
+const QUARK = process.env.QUARK_LINK || 'https://pan.quark.cn/s/6ed1bec2fb77'
+const QUARK_CODE = process.env.QUARK_CODE || '/~692c3bgYtc~/'
+
 const installer = join(ROOT, 'app', 'release', `RAINBOWMC-${version}-setup.exe`)
 const stat = statSync(installer)
 const sha = createHash('sha256').update(readFileSync(installer)).digest('hex')
 const sizeMB = (stat.size / 1048576).toFixed(2)
 const sizeBytes = stat.size
 
-const DOWNLOAD = `https://rainbowdoor.icu/launcher/RAINBOWMC-${version}-setup-r1.exe`
-
-const notesLine =
-  notes ||
-  (() => {
-    try {
-      const log = readFileSync(join(ROOT, '_修改记录.md'), 'utf8')
-      const lines = log
-        .split(/\r?\n/)
-        .filter((l) => l.includes(`0.${version.split('.').slice(1).join('.')}`) && l.includes('|'))
-        .slice(-3)
-      return lines.map((l) => '· ' + l.split('|').slice(2, 3).join('').trim()).join('\n')
-    } catch {
-      return ''
-    }
-  })()
+const notesLine = notes || ''
 
 const afdian = `RAINBOW MC 启动器 v${version}
 
@@ -47,11 +36,9 @@ const afdian = `RAINBOW MC 启动器 v${version}
 支持 Forge / NeoForge / Fabric / Quilt 一键安装；支持拖入 Modrinth 与 CurseForge 整合包，
 自动补齐全部模组；支持微软正版、社团账号、纯离线三种登录。
 
-【主下载】
-${DOWNLOAD}
-
-【备用（夸克网盘）】
-（把夸克分享链接贴这里）
+【下载】
+${QUARK}
+手机打开夸克 App 可搜口令：${QUARK_CODE}
 
 文件信息
   版本：${version}
@@ -59,13 +46,13 @@ ${DOWNLOAD}
   SHA256：${sha}
   系统要求：Windows 10 / 11 x64
 
-本作品全部功能免费，不需要赞助即可使用；所有版本都在上面这个链接里更新替换。
+本作品全部功能免费，不需要赞助即可使用；新版本会覆盖更新到上面这个网盘链接。
 
 ${notesLine}
 `
 
-const bili = `【主下载】${DOWNLOAD}
-【备用】夸克网盘（见评论区置顶）
+const bili = `【下载】${QUARK}
+夸克 App 搜口令：${QUARK_CODE}
 版本 ${version} · ${sizeMB} MB · Windows 10/11
 SHA256: ${sha.slice(0, 16)}…${sha.slice(-8)}
 免费开源，无付费墙`
@@ -87,7 +74,9 @@ Java 运行时、加载器、缺失的游戏文件全部自动处理。
 
 ## 下载
 
-${DOWNLOAD}
+${QUARK}
+
+夸克 App 搜口令：${QUARK_CODE}
 
 \`\`\`
 版本 ${version}
@@ -115,4 +104,5 @@ writeFileSync(join(outDir, `论坛帖-${version}.md`), forum, 'utf8')
 console.log('version :', version)
 console.log('size    :', sizeBytes, `(${sizeMB} MB)`)
 console.log('sha256  :', sha)
+console.log('quark   :', QUARK)
 console.log('drafts  :', outDir)
