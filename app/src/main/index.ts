@@ -15,7 +15,13 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null
 
 // 单实例锁：重复启动时把已有窗口拉到前面，避免多个旧版本窗口互相干扰
-const gotTheLock = app.requestSingleInstanceLock()
+// 例外：--admin 是我们自己发起的「提权重启」，必须允许新旧两个实例短暂共存，
+// 否则新实例会被旧实例挤掉，表现为「点了以管理员身份重启但没反应」。
+// 允许界面在无用户手势时也能播放提示音（更新音效需要）
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
+const IS_ADMIN_RELAUNCH = process.argv.includes('--admin')
+const gotTheLock = IS_ADMIN_RELAUNCH ? true : app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.quit()
 } else {
@@ -24,6 +30,23 @@ if (!gotTheLock) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.show()
       mainWindow.focus()
+    }
+  })
+}
+
+// 以管理员身份启动的实例写这个标记，供旧实例确认「提权重启真的成功了」
+if (IS_ADMIN_RELAUNCH) {
+  app.whenReady().then(() => {
+    try {
+      const dir = join(paths.root(), 'cache')
+      require('fs').mkdirSync(dir, { recursive: true })
+      require('fs').writeFileSync(
+        join(dir, 'admin-started.json'),
+        JSON.stringify({ pid: process.pid, at: Date.now() }),
+        'utf8'
+      )
+    } catch {
+      /* 标记失败不影响运行 */
     }
   })
 }
@@ -112,9 +135,35 @@ function registerIpc(): void {
     await shell.openPath(paths.logs())
     return true
   })
+  ipcMain.handle('open:url', async (_e, url: string) => {
+    // 只放行 https，防止被拼出 file:// 或自定义协议
+    try {
+      const u = new URL(String(url))
+      if (u.protocol !== 'https:') return false
+      await shell.openExternal(u.toString())
+      return true
+    } catch {
+      return false
+    }
+  })
   ipcMain.handle('open:path', async (_e, p: string) => {
-    await shell.openPath(p)
-    return true
+    // 只允许 data 目录内：目录直接打开，文件用「在文件夹中显示」（不执行任何程序）
+    try {
+      const path = require('path') as typeof import('path')
+      const fs = require('fs') as typeof import('fs')
+      const root = path.resolve(paths.root())
+      const target = path.resolve(String(p || ''))
+      const inside = target === root || target.startsWith(root + path.sep)
+      if (!inside) return false
+      if (fs.existsSync(target) && fs.statSync(target).isFile()) {
+        shell.showItemInFolder(target)
+        return true
+      }
+      await shell.openPath(target)
+      return true
+    } catch {
+      return false
+    }
   })
 
   ipcMain.handle('win:minimize', () => mainWindow?.minimize())
@@ -392,5 +441,6 @@ app.on('before-quit', () => {
   void import('./minecraft/multiplayer').then((mp) => mp.stop()).catch(() => undefined)
 })
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // mac 惯例是关窗不退出，但启动器关窗即结束，统一退出
+  app.quit()
 })

@@ -6,6 +6,7 @@ node_modules/
 app/out/
 app/dist/
 app/release/
+app/release-mac/
 app/*.tsbuildinfo
 
 # 系统与编辑器
@@ -19,6 +20,7 @@ Thumbs.db
 _tmp_*
 *.zip
 *.exe
+*.dmg
 
 # 记忆/流水（内部文件，不对外）
 _修改记录.md

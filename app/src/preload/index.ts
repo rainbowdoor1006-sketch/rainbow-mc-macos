@@ -16,6 +16,7 @@ const api = {
     ipcRenderer.invoke('app:setActive', patch),
   openLogs: (): Promise<boolean> => ipcRenderer.invoke('open:logs'),
   openPath: (p: string): Promise<boolean> => ipcRenderer.invoke('open:path', p),
+  openUrl: (url: string): Promise<boolean> => ipcRenderer.invoke('open:url', url),
   mc: {
     manifest: (force?: boolean): Promise<{ latest: { release: string; snapshot: string }; versions: VersionSummary[] }> =>
       ipcRenderer.invoke('mc:manifest', force),
@@ -24,6 +25,8 @@ const api = {
     javaCheck: (major: number): Promise<string | null> => ipcRenderer.invoke('mc:javaCheck', major),
     javaEnsure: (major: number): Promise<{ path: string; major: number; downloaded: boolean }> =>
       ipcRenderer.invoke('mc:javaEnsure', major),
+    estimate: (projectId: string): Promise<{ ok: boolean; estimate?: unknown; message?: string }> =>
+      ipcRenderer.invoke('mc:estimate', projectId),
     launch: (
       projectId: string
     ): Promise<{ ok: boolean; code?: number; errorCode?: string; message?: string; zip?: string; runId?: string }> =>
@@ -167,6 +170,64 @@ const api = {
       return () => ipcRenderer.removeListener('loader:progress', handler)
     }
   },
+  net: {
+    isAdmin: (): Promise<{ ok: boolean; admin: boolean }> => ipcRenderer.invoke('net:isAdmin'),
+    relaunchAdmin: (): Promise<{
+      ok: boolean
+      uacShown?: boolean
+      adminStarted?: boolean
+      blocked?: boolean
+      message?: string
+    }> =>
+      ipcRenderer.invoke('net:relaunchAdmin'),
+    makeScripts: (ids: string[]): Promise<{
+      ok: boolean
+      applyPath?: string
+      revertPath?: string
+      message?: string
+    }> => ipcRenderer.invoke('net:makeScripts', ids),
+    optState: (): Promise<{ ok: boolean; options?: unknown[]; message?: string }> =>
+      ipcRenderer.invoke('net:optState'),
+    optApply: (ids: string[]): Promise<{ ok: boolean; result?: unknown; message?: string }> =>
+      ipcRenderer.invoke('net:optApply', ids),
+    optRevert: (ids: string[]): Promise<{ ok: boolean; result?: unknown; message?: string }> =>
+      ipcRenderer.invoke('net:optRevert', ids),
+    check: (withSpeed?: boolean): Promise<{ ok: boolean; report?: unknown; message?: string }> =>
+      ipcRenderer.invoke('net:check', withSpeed),
+    speed: (): Promise<{ ok: boolean; speed?: unknown; message?: string }> => ipcRenderer.invoke('net:speed')
+  },
+  mem: {
+    stats: (): Promise<{
+      selfWorkingSetMB: number
+      availableMB: number
+      totalMB: number
+      childCount: number
+    }> => ipcRenderer.invoke('mem:stats'),
+    optimize: (level?: 'own' | 'safe' | 'aggressive'): Promise<{
+      ok: boolean
+      level: 'own' | 'safe' | 'aggressive'
+      message: string
+      before: { selfWorkingSetMB: number; availableMB: number; totalMB: number; usedPct: number }
+      after: { selfWorkingSetMB: number; availableMB: number; totalMB: number; usedPct: number }
+      freedMB: number
+      droppedPct: number
+      trimmed: number
+      clearedFiles: number
+      standbyCleared: boolean
+    }> => ipcRenderer.invoke('mem:optimize', level)
+  },
+  console: {
+    list: (): Promise<{ name: string; group: string; usage: string; desc: string }[]> =>
+      ipcRenderer.invoke('console:list'),
+    run: (input: string): Promise<{ ok: boolean; lines: unknown[] }> => ipcRenderer.invoke('console:run', input)
+  },
+  mirror: {
+    test: (): Promise<{ ok: boolean; results: unknown[]; recommend: string }> => ipcRenderer.invoke('mirror:test')
+  },
+  cache: {
+    list: (): Promise<{ key: string; label: string; mb: number }[]> => ipcRenderer.invoke('cache:list'),
+    clear: (key: string): Promise<{ ok: boolean; freedMb: number }> => ipcRenderer.invoke('cache:clear', key)
+  },
   project: {
     list: (): Promise<import('@shared/types').GameProject[]> => ipcRenderer.invoke('project:list'),
     create: (
@@ -178,14 +239,37 @@ const api = {
     rename: (id: string, name: string): Promise<AppState> => ipcRenderer.invoke('project:rename', { id, name }),
     remove: (id: string): Promise<AppState> => ipcRenderer.invoke('project:remove', id),
     setActive: (id: string): Promise<AppState> => ipcRenderer.invoke('project:setActive', id),
-    openDir: (id: string): Promise<boolean> => ipcRenderer.invoke('project:openDir', id)
+    openDir: (id: string): Promise<boolean> => ipcRenderer.invoke('project:openDir', id),
+    summary: (projectId: string): Promise<{ ok: boolean; summary?: unknown; message?: string }> =>
+      ipcRenderer.invoke('project:summary', projectId),
+    modcheck: (projectId: string): Promise<{ ok: boolean; result?: unknown; message?: string }> =>
+      ipcRenderer.invoke('project:modcheck', projectId),
+    installDep: (
+      projectId: string,
+      depId: string
+    ): Promise<{ ok: boolean; title?: string; fileName?: string; message?: string }> =>
+      ipcRenderer.invoke('mods:installDep', { projectId, depId }),
   },
   logs: {
-    list: (): Promise<{ name: string; path: string; size: number; mtime: number }[]> => ipcRenderer.invoke('logs:list')
+    list: (): Promise<{ name: string; path: string; size: number; mtime: number }[]> => ipcRenderer.invoke('logs:list'),
+    feedback: (payload?: { projectId?: string; extra?: string }): Promise<{
+      ok: boolean
+      path?: string
+      sizeMb?: number
+      message?: string
+    }> => ipcRenderer.invoke('logs:feedback', payload)
+
   },
   pack: {
     importPath: (path: string, name?: string): Promise<{ ok: boolean; name?: string; message?: string }> =>
       ipcRenderer.invoke('pack:importPath', { path, name }),
+    audit: (projectId: string): Promise<{
+      ok: boolean
+      counts?: { mods: number; shaderpacks: number; resourcepacks: number }
+      issues?: { kind: string; file: string; detail: string }[]
+      shaderConfigMissing?: string
+      message: string
+    }> => ipcRenderer.invoke('pack:audit', projectId),
     cancel: (): Promise<boolean> => ipcRenderer.invoke('pack:cancel'),
     onProgress: (cb: (p: { stage: string; done: number; total: number; name: string }) => void): (() => void) => {
       const handler = (_e: unknown, p: { stage: string; done: number; total: number; name: string }): void => cb(p)
@@ -382,9 +466,11 @@ const api = {
     skip: (version: string): Promise<boolean> => ipcRenderer.invoke('update:skip', version),
     download: (latest: unknown): Promise<{ ok: boolean; path?: string; message?: string }> =>
       ipcRenderer.invoke('update:download', latest),
-    apply: (path: string): Promise<{ ok: boolean; message?: string }> =>
-      ipcRenderer.invoke('update:apply', path),
+    apply: (path: string, toVersion?: string): Promise<{ ok: boolean; message?: string }> =>
+      ipcRenderer.invoke('update:apply', path, toVersion),
     open: (url: string): Promise<boolean> => ipcRenderer.invoke('update:open', url),
+    consumeUpdated: (): Promise<{ from?: string; to?: string } | null> =>
+      ipcRenderer.invoke('update:consumeUpdated'),
     onProgress: (cb: (p: { loaded: number; total: number }) => void): (() => void) => {
       const h = (_e: unknown, p: { loaded: number; total: number }): void => cb(p)
       ipcRenderer.on('update:progress', h)

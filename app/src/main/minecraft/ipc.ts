@@ -14,6 +14,23 @@ import { installFabric, installForge, installNeoForge, installQuilt, listLoaders
 import { ensureAssets, ensureVersionFiles } from './installer'
 import { downloadCfFiles } from './cf'
 import * as mp from './multiplayer'
+import { estimateProject } from './estimate'
+import { projectSummary } from './stats'
+import { checkMods } from './modcheck'
+import { buildFeedbackZip } from './feedback'
+import { initTray } from './tray'
+import { checkNetwork, speedTest } from './netcheck'
+import {
+  detect as detectNetOpt,
+  apply as applyNetOpt,
+  revert as revertNetOpt,
+  isElevated,
+  relaunchElevated,
+  writeOptimizeScripts
+} from './netopt'
+import { runCommand, listCommands } from './console'
+import { testMirrors, cacheSizes, clearCache } from './mirrortest'
+import { diagnose } from './diagnose'
 import {
   getProjectInfo,
   getVersion,
@@ -24,7 +41,10 @@ import {
   type ProjectKind
 } from './modrinth'
 import { checkProject, readManifest, removeEntry, upsertEntry } from './mods'
-import { resolveZhBatch, zhCacheSize } from './zhdict'
+import { resolveEnglishQueries, resolveZhBatch, zhCacheSize } from './zhdict'
+import { auditInstance } from './audit'
+import { markUpdatePending, noteUpdatedLaunch } from '../update'
+import { isMac, JAVA_BIN } from '../platform'
 import { backupSave, deleteMod, deleteSave, exportInstance, exportStartScript, importPack, instanceDir, listModFiles, listSaves, screenshotDir, toggleMod } from './instance'
 import { autoMemoryMb, buildCommand, totalMemoryMb } from './launcher'
 import { clubAuthorize, clubVerify } from './club'
@@ -49,6 +69,7 @@ function source(): AppSettings['downloadSource'] {
 }
 
 const running = new Map<string, { kill: () => void; pid?: number; projectId: string }>()
+const runStartedAt = new Map<string, number>()
 const userKilled = new Set<string>()
 /** 正在准备（还没 spawn 出 java 进程）的启动，用于「取消启动」 */
 let pendingLaunch: { runId: string; projectId: string; cancelled: boolean; abort?: () => void } | null = null
@@ -152,50 +173,27 @@ function listGpus(): string[] {
 
 
 /**
- * 显卡类崩溃时自动做的兼容处理（尽量不让用户去点驱动设置）：
- * ① 把 javaw.exe 在高性能 GPU 偏好里登记（用户级注册表，不需要管理员）
- * ② 把渲染类模组（Embeddium/Sodium/Rubidium/Oculus/Iris）移到 mods.disabled，下次启动用原版渲染
+ * 显卡类崩溃后的「建议」，只写日志，绝不改动用户的模组与注册表。
+ *
+ * 历史教训（2026-10-29）：旧实现会在崩溃后自动把 Embeddium/Oculus 等渲染模组
+ * 移进 mods.disabled，并写 HKCU GPU 偏好。结果用户的整合包在没有任何确认的情况下
+ * 被改坏（启动报 embeddium 未安装、主界面背景变黑）。现在改成只给建议，
+ * 要不要动由用户在界面里自己决定。
  */
 function applyGpuCompatFix(projectDir: string, signature: string, logFile: string): string[] {
   const done: string[] = []
-  const instDir = join(paths.games(), projectDir)
-
   if (/NVIDIA|Intel|显卡|OpenGL/i.test(signature)) {
-    try {
-      const java = findRuntimeJava()
-      if (java) {
-        const key = 'HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences'
-        execSync(
-          `reg add "${key}" /v "${java}" /t REG_SZ /d "GpuPreference=2;" /f`,
-          { stdio: 'ignore', windowsHide: true, timeout: 5000 }
-        )
-        done.push('已把 javaw.exe 登记为「高性能 GPU」')
-      }
-    } catch {
-      /* 忽略 */
-    }
+    done.push('建议：把 javaw.exe 设为「高性能 GPU」（Windows 设置 → 显示 → 图形）')
   }
-
   if (/NVIDIA|OpenGL/i.test(signature)) {
-    const modsDir = join(instDir, 'mods')
-    const disabledDir = join(instDir, 'mods.disabled')
-    try {
-      mkdirSync(disabledDir, { recursive: true })
-      const targets = readdirSync(modsDir).filter((f: string) =>
-        /^(embeddium|sodium|rubidium|oculus|iris|sodium-extra|embeddium-extra).*\.jar$/i.test(f)
-      )
-      for (const f of targets) {
-        renameSync(join(modsDir, f), join(disabledDir, f))
-      }
-      if (targets.length) done.push(`已临时禁用渲染优化模组：${targets.join('、')}（在 mods.disabled 里）`)
-    } catch {
-      /* 忽略 */
-    }
+    done.push('建议：若反复在加载画面崩溃，可临时把 mods 里的 Embeddium/Oculus 移到 mods.disabled（需你手动操作）')
   }
-
   if (done.length) {
     try {
-      appendFileSync(logFile, '\n=== 自动兼容处理 ===\n' + done.map((d) => '· ' + d).join('\n') + '\n')
+      appendFileSync(
+        logFile,
+        '\n=== 兼容建议（未自动执行）===\n' + done.map((d) => '· ' + d).join('\n') + '\n'
+      )
     } catch {
       /* 忽略 */
     }
@@ -214,7 +212,7 @@ function findRuntimeJava(): string | null {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, e.name)
         if (e.isDirectory()) stack.push(full)
-        else if (e.name.toLowerCase() === 'javaw.exe') return full
+        else if (e.name.toLowerCase() === 'javaw.exe' || e.name.toLowerCase() === 'java') return full
       }
     }
   } catch {
@@ -281,7 +279,11 @@ function diagnoseCrash(logFile: string): string | undefined {
   }
   return undefined
 }
+import { registerMemoryIpc } from './memory'
+
 export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): void {
+  registerMemoryIpc(ipcMain)
+
   // 组件库需要知道当前有哪些项目，才能算「这个组件被哪些项目用了」
   initLibrary(() => state().projects)
   const emit = (channel: string, payload: unknown): void => {
@@ -294,6 +296,7 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
     for (const [runId, v] of running) {
       if (v.pid && !pidAlive(v.pid)) {
         running.delete(runId)
+      runStartedAt.delete(runId)
         changed = true
         emit('mc:running', { running: false, runId, projectId: v.projectId })
       }
@@ -360,6 +363,149 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
     }
   })
 
+
+
+  /* ---------- 启动前资源预估 ---------- */
+  ipcMain.handle('mc:estimate', (_e, projectId: string) => {
+    try {
+      const p = state().projects.find((x) => x.id === projectId)
+      if (!p) return { ok: false, message: '项目不存在' }
+      return { ok: true, estimate: estimateProject(p) }
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  /* ---------- 小功能：项目概况 / 模组体检 / 反馈打包 ---------- */
+  ipcMain.handle('project:summary', (_e, projectId: string) => {
+    try {
+      const p = state().projects.find((x) => x.id === projectId)
+      if (!p) return { ok: false, message: '项目不存在' }
+      return { ok: true, summary: projectSummary(p) }
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('project:modcheck', (_e, projectId: string) => {
+    try {
+      const p = state().projects.find((x) => x.id === projectId)
+      if (!p) return { ok: false, message: '项目不存在' }
+      return { ok: true, result: checkMods(p) }
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('logs:feedback', async (_e, payload?: { projectId?: string; extra?: string }) => {
+    try {
+      const p = payload?.projectId ? state().projects.find((x) => x.id === payload.projectId) : undefined
+      const r = buildFeedbackZip(p, payload?.extra)
+      if (r.ok && r.path) {
+        const { shell } = require('electron') as typeof import('electron')
+        shell.showItemInFolder(r.path)
+      }
+      return r
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+
+  /* ---------- 主控台 / 测速 / 缺前置安装 ---------- */
+  ipcMain.handle('console:list', () => listCommands())
+  ipcMain.handle('console:run', async (_e, input: string) => runCommand(input))
+  ipcMain.handle('mirror:test', async () => testMirrors())
+  ipcMain.handle('cache:list', () => cacheSizes())
+  ipcMain.handle('cache:clear', (_e, key: string) => clearCache(key))
+
+  ipcMain.handle('mods:installDep', async (_e, payload: { projectId: string; depId: string }) => {
+    try {
+      const s2 = state()
+      const proj = s2.projects.find((x) => x.id === payload.projectId)
+      if (!proj) return { ok: false, message: '项目不存在' }
+      // 先用 depId 直接搜 Modrinth；找不到再用「补全 API」查项目
+      const found = await searchProjects('mod', payload.depId, {
+        mcVersion: proj.mcVersion,
+        loader: proj.loader,
+        limit: 5
+      })
+      const hit = found.hits[0]
+      if (!hit) return { ok: false, message: `Modrinth 上没有找到 ${payload.depId}` }
+      const versions = await listProjectVersions(hit.project_id)
+      const best =
+        versions.find((v) => (v.loaders ?? []).includes(proj.loader)) ?? versions[0]
+      if (!best) return { ok: false, message: '这个项目没有可下载版本' }
+      const r = await installProjectVersion(proj.dir, 'mod', best)
+      upsertEntry(proj.id, {
+        id: `${hit.project_id}:${best.id}`,
+        instanceId: proj.id,
+        projectId: hit.project_id,
+        kind: 'mod',
+        title: hit.title,
+        versionName: best.version_number,
+        fileName: r.fileName,
+        source: 'modrinth',
+        installedAt: Date.now()
+      } as never)
+      persist()
+      return { ok: true, title: hit.title, fileName: r.fileName }
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+
+  /* ---------- 联机网络体检 ---------- */
+  ipcMain.handle('net:check', async (_e, withSpeed?: boolean) => {
+    try {
+      return { ok: true, report: await checkNetwork(withSpeed !== false) }
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  ipcMain.handle('net:speed', async () => {
+    try {
+      return { ok: true, speed: await speedTest() }
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+
+  ipcMain.handle('net:isAdmin', () => {
+    try {
+      return { ok: true, admin: isElevated() }
+    } catch {
+      return { ok: true, admin: false }
+    }
+  })
+  ipcMain.handle('net:relaunchAdmin', async () => {
+    // 是否弹窗由界面决定：UAC 已弹出就不打扰；被拦截时界面弹提示框
+    return await relaunchElevated()
+  })
+
+  ipcMain.handle('net:optState', () => {
+    try {
+      return { ok: true, options: detectNetOpt() }
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  ipcMain.handle('net:optApply', (_e, ids: string[]) => {
+    try {
+      return { ok: true, result: applyNetOpt(ids as never) }
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  ipcMain.handle('net:optRevert', (_e, ids: string[]) => {
+    try {
+      return { ok: true, result: revertNetOpt(ids as never) }
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
 
   /* ---------- 联机（Terracotta） ---------- */
   ipcMain.handle('mp:status', () => mp.currentStatus())
@@ -693,12 +839,18 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
       }
 
       // 准备阶段最多等 180 秒（下载 Java / 解压 natives 卡住时能自己退出来）
+      // 启动计时：从点击到出现这几行之一，视为「进主菜单」
+      let bootAt: number | null = null
+      const READY_RE = /Sound engine started|Setting user|Backend library|OpenAL initialized|Reloading ResourceManager/i
       const launchPromise = launchGame(
         project,
         account,
         s.settings,
         logFile,
-        (line) => emit('mc:launch-line', { runId, line }),
+        (line) => {
+          if (bootAt === null && READY_RE.test(line)) bootAt = Date.now()
+          emit('mc:launch-line', { runId, line })
+        },
         () => !!pendingLaunch?.cancelled
       )
       // 竞速失败时（取消/超时）launchGame 仍在后台跑，吞掉它的异常，避免 unhandled rejection
@@ -721,6 +873,44 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
         }
       }
       running.set(runId, { kill: () => handle.proc.kill(), pid: handle.proc.pid, projectId: project.id })
+      runStartedAt.set(runId, startedAt)
+      // 托盘：显示运行时长与内存占用
+      try {
+        const { BrowserWindow: BW } = require('electron') as typeof import('electron')
+        initTray({
+          getRunning: () => {
+            const first = [...running.entries()][0]
+            if (!first) return null
+            const [id, v] = first
+            const proj = state().projects.find((x) => x.id === v.projectId)
+            return {
+              pid: v.pid ?? 0,
+              projectId: v.projectId,
+              projectName: proj?.name ?? 'Minecraft',
+              since: runStartedAt.get(id) ?? Date.now()
+            }
+          },
+          stopGame: () => {
+            for (const [, v] of running) {
+              try {
+                v.kill()
+              } catch {
+                /* ignore */
+              }
+            }
+          },
+          showWindow: () => {
+            const w = BW.getAllWindows()[0]
+            if (w) {
+              if (w.isMinimized()) w.restore()
+              w.show()
+              w.focus()
+            }
+          }
+        })
+      } catch {
+        /* 托盘失败不影响启动 */
+      }
       saveRunState()
       emit('mc:launch-started', { runId, logFile })
       emit('mc:running', { running: true, runId, projectId: project.id })
@@ -766,17 +956,32 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
         loader: project.loader,
         account: account.name,
         loginMode: account.mode,
-        exitCode,
         // Windows 上被强杀的进程会给 4294967295（无符号的 -1），归一化成可读值
         exitCodeSigned: exitCode > 2147483647 ? exitCode - 4294967296 : exitCode,
         stopReason: killed ? 'user' : exitCode === 0 ? 'exit' : 'crash',
-        errorCode: killed || exitCode === 0 ? undefined : 'E2001',
+        errorCode: killed || exitCode === 0
+          ? undefined
+          : diag.signature.includes('内存')
+            ? 'E2100'
+            : 'E2001',
         message: killed ? '用户从启动器结束游戏' : undefined,
         durationMs: Date.now() - startedAt
       }, logFile)
 
+      const bootMs = bootAt ? bootAt - startedAt : null
+      const prev = s.projects.find((p) => p.id === project.id)
       setProjects(
-        s.projects.map((p) => (p.id === project.id ? { ...p, lastPlayedAt: Date.now() } : p))
+        s.projects.map((p) =>
+          p.id === project.id
+            ? {
+                ...p,
+                lastPlayedAt: Date.now(),
+                lastBootMs: bootMs ?? p.lastBootMs,
+                bestBootMs: bootMs ? Math.min(bootMs, p.bestBootMs ?? bootMs) : p.bestBootMs,
+                launchCount: (p.launchCount ?? 0) + 1
+              }
+            : p
+        )
       )
       persist()
 
@@ -790,6 +995,21 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
         runId
       }
       emit('mc:launch-done', result)
+      // 系统通知：切到后台也能知道结果
+      try {
+        const { Notification } = require('electron') as typeof import('electron')
+        if (Notification.isSupported()) {
+          const crashed = !killed && !result.ok
+          new Notification({
+            title: crashed ? 'RAINBOW MC · 游戏异常退出' : 'RAINBOW MC · 游戏已退出',
+            body: crashed
+              ? `${project.name} 异常退出，可在启动器查看判定结果`
+              : `${project.name} 已关闭${bootAt ? '（启动耗时 ' + ((bootAt - startedAt) / 1000).toFixed(1) + ' 秒）' : ''}`
+          }).show()
+        }
+      } catch {
+        /* 通知失败忽略 */
+      }
       return result
     } catch (e) {
       const cancelled = pendingLaunch?.cancelled
@@ -814,7 +1034,34 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
         message,
         durationMs: Date.now() - startedAt
       }, logFile)
-      const result = { ok: cancelled, killed: cancelled, errorCode: cancelled ? undefined : errorCode, message, logFile, zip, runId }
+      // 崩溃时给出「唯一判定」，而不是罗列可能性
+      let diagnosis = null
+      if (!cancelled) {
+        try {
+          const st = state()
+          const modsDir = join(paths.games(), project.dir, 'mods')
+          const modCount = require('fs')
+            .readdirSync(modsDir)
+            .filter((f: string) => f.toLowerCase().endsWith('.jar')).length
+          diagnosis = diagnose(logFile, {
+            allocatedMb: project.memoryMb || st.settings.maxMemoryMb || 4096,
+            mods: modCount,
+            gpu: undefined,
+          })
+        } catch {
+          /* 诊断失败不影响错误弹窗 */
+        }
+      }
+      const result = {
+        ok: cancelled,
+        killed: cancelled,
+        errorCode: cancelled ? undefined : errorCode,
+        message,
+        logFile,
+        zip,
+        runId,
+        diagnosis
+      }
       emit('mc:running', { running: false, runId, projectId: project.id })
       emit('mc:launch-done', result)
       return result
@@ -910,6 +1157,16 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
     return true
   })
 
+  ipcMain.handle('pack:audit', async (_e, projectId: string) => {
+    const proj = state().projects.find((x) => x.id === projectId)
+    if (!proj) return { ok: false, message: '项目不存在' }
+    try {
+      return auditInstance(join(paths.games(), proj.dir))
+    } catch (e) {
+      return { ok: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
   ipcMain.handle('pack:importPath', async (_e, payload: { path: string; name?: string }) => {
     const { importPack } = await import('./instance')
     packCancel = false
@@ -949,45 +1206,146 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
       if (result.ok && info.projectId && info.loader && info.loader !== 'vanilla' && info.mcVersion) {
         const proj = state().projects.find((x) => x.id === info.projectId)
         if (proj && proj.loaderVersion) {
-          emit('pack:progress', { stage: 'loader', done: 0, total: 1, name: `安装 ${proj.loader} ${proj.loaderVersion}` })
-          const progress = (m: string): void =>
-            emit('pack:progress', { stage: 'loader', done: 0, total: 1, name: m })
+          let reusedLoader = false
+          // 本地已经有这个加载器版本（例如离线整合包 / 之前装过）：直接复用，完全不联网
           try {
-            let lr: { versionId: string }
-            const abort = (): boolean => packCancel || ctrl.signal.aborted
-            if (proj.loader === 'fabric') lr = await installFabric(info.mcVersion, proj.loaderVersion, progress)
-            else if (proj.loader === 'quilt') lr = await installQuilt(info.mcVersion, proj.loaderVersion, progress)
-            else if (proj.loader === 'forge')
-              lr = await installForge(info.mcVersion, proj.loaderVersion, progress, abort)
-            else lr = await installNeoForge(info.mcVersion, proj.loaderVersion, progress, abort)
-
-            const s3 = state()
-            setProjects(s3.projects.map((x) => (x.id === info.projectId ? { ...x, versionId: lr.versionId } : x)))
-            persist()
-
-            // CurseForge 包：模组不在包里，必须按 ID 解析下载
-            const cfFiles = (result as { cfFiles?: { projectId: number; fileId: number }[] }).cfFiles
-            if (cfFiles?.length) {
-              progress(`下载 CurseForge 模组（${cfFiles.length} 个）…`)
-              const cf = await downloadCfFiles(
-                state().settings,
-                proj.dir,
-                cfFiles,
-                progress,
-                ctrl.signal
+            // 精确匹配 `<mc>-<loader>-<ver>` 目录，不能用"最短名字"猜测（会命中别的 forge 版本）
+            const exact = `${info.mcVersion}-${proj.loader}-${proj.loaderVersion}`
+            const vdir = join(paths.versions(), exact, `${exact}.json`)
+            const existing = existsSync(vdir) ? exact : null
+            if (existing) {
+              const s2 = state()
+              setProjects(
+                s2.projects.map((x) => (x.id === proj.id ? { ...x, versionId: existing } : x))
               )
-              if (cf.downloaded) progress(`已下载 ${cf.downloaded} 个 CurseForge 模组`)
-              if (cf.message) progress(cf.message)
+              persist()
+              reusedLoader = true
+              emit('pack:progress', {
+                stage: 'loader',
+                done: 1,
+                total: 1,
+                name: `已复用本地加载器 ${existing}（无需联网）`
+              } as never)
+            }
+          } catch {
+            /* 检测失败就继续走正常安装 */
+          }
+          emit('pack:progress', { stage: 'loader', done: 0, total: 1, name: `安装 ${proj.loader} ${proj.loaderVersion}` })
+          const progress = (m: string, doneBytes?: number, totalBytes?: number): void =>
+            emit('pack:progress', {
+              stage: 'loader',
+              done: doneBytes ?? 0,
+              total: totalBytes ?? 0,
+              name: m
+            } as never)
+          try {
+            // ── 顺序：先装加载器（I/O 与 CPU 密集，独占用时最短），再并行「下模组 + 补库 + 补资源」 ──
+            // 实测：把加载器安装和 24 并发下载并行，Forge 打补丁会被拖到 3 倍时长，整体反而更慢。
+            const cfFiles = (result as { cfFiles?: { projectId: number; fileId: number }[] }).cfFiles
+            let lr: { versionId: string } | null = null
+
+            try {
+              const abort = (): boolean => packCancel || ctrl.signal.aborted
+              if (reusedLoader) {
+                lr = { versionId: `${info.mcVersion}-${proj.loader}-${proj.loaderVersion}` }
+              } else if (proj.loader === 'fabric') lr = await installFabric(info.mcVersion, proj.loaderVersion, progress)
+              else if (proj.loader === 'quilt') lr = await installQuilt(info.mcVersion, proj.loaderVersion, progress)
+              else if (proj.loader === 'forge') lr = await installForge(info.mcVersion, proj.loaderVersion, progress, abort)
+              else lr = await installNeoForge(info.mcVersion, proj.loaderVersion, progress, abort)
+
+              const s3 = state()
+              setProjects(s3.projects.map((x) => (x.id === info.projectId ? { ...x, versionId: lr!.versionId } : x)))
+              persist()
+            } catch (e) {
+              // __loader_ready__ = 本地已有加载器，跳过安装，不算失败
+              if (!(e instanceof Error && e.message === '__loader_ready__')) {
+                /* 加载器装失败也不回滚项目，用户可以在组件库里手动应用 */
+              }
             }
 
-            // 导入完成后顺带补齐这一版需要的全部库（原版 + 加载器），
-            // 否则首次启动可能缺 log4j 之类的共享库，直接 FindException 崩溃
+            const jobs: Promise<void>[] = []
+            if (cfFiles?.length) {
+              progress(`下载 CurseForge 模组（${cfFiles.length} 个，边解析边下载）…`)
+              jobs.push(
+                downloadCfFiles(state().settings, proj.dir, cfFiles, progress, ctrl.signal).then((cf) => {
+                  if (cf.downloaded)
+                    progress(`已下载 ${cf.downloaded} 个 CurseForge 模组（${(cf.bytes / 1048576).toFixed(0)} MB）`)
+                  if (cf.message) progress(cf.message)
+                })
+              )
+            }
+            if (lr) {
+              const vid = lr.versionId
+              jobs.push(
+                (async () => {
+                  try {
+                    progress('补齐游戏库…')
+                    const fixed = await ensureVersionFiles(vid, state().settings.downloadSource, progress)
+                    if (fixed.downloaded > 0) progress(`已补齐 ${fixed.downloaded} 个库文件`)
+                  } catch {
+                    /* 忽略 */
+                  }
+                  try {
+                    const as2 = await ensureAssets(vid, state().settings.downloadSource, progress)
+                    if (as2.downloaded > 0) progress(`已补齐 ${as2.downloaded} 个资源文件`)
+                  } catch {
+                    /* 忽略 */
+                  }
+                })()
+              )
+            }
+            await Promise.all(jobs)
+
+            // 装了之后统一审计：文件是否齐、目录是否放对（光影/资源包不再靠文件名猜）
             try {
-              progress('补齐游戏库…')
-              const fixed = await ensureVersionFiles(lr.versionId, state().settings.downloadSource, progress)
-              if (fixed.downloaded > 0) progress(`已补齐 ${fixed.downloaded} 个库文件`)
+              const audit = auditInstance(join(paths.games(), proj.dir))
+              progress(`文件检查：${audit.message}`)
+              for (const it of audit.issues.slice(0, 5)) {
+                progress(`· ${it.file}：${it.detail}`)
+              }
             } catch {
-              /* 补齐失败不阻塞导入 */
+              /* 审计失败不影响导入 */
+            }
+
+            // 完整性校验：CF 包里声明的模组必须真的躺在 mods 目录里
+            if (cfFiles?.length) {
+              try {
+                const modsDir = join(paths.games(), proj.dir, 'mods')
+                const jars = require('fs')
+                  .readdirSync(modsDir)
+                  .filter((f: string) => f.toLowerCase().endsWith('.jar'))
+                const problems: string[] = []
+                for (const f of jars) {
+                  const full = join(modsDir, f)
+                  if (require('fs').statSync(full).size < 1024) problems.push(f)
+                }
+                if (problems.length) progress(`⚠ ${problems.length} 个模组文件异常：${problems.slice(0, 3).join('、')}`)
+                else progress(`模组完整性检查通过（${jars.length} 个 jar）`)
+              } catch {
+                /* 校验失败不影响导入 */
+              }
+            }
+
+            // 大整合包自动给足内存：4GB 跑 500+ 模组必 OOM（实测崩在渲染阶段）
+            try {
+              const st = state()
+              const proj2 = st.projects.find((x) => x.id === info.projectId)
+              if (proj2 && !proj2.memoryMb) {
+                const modsDir = join(paths.games(), proj2.dir, 'mods')
+                const jarCount = require('fs')
+                  .readdirSync(modsDir)
+                  .filter((f: string) => f.toLowerCase().endsWith('.jar')).length
+                const totalMb = Math.round((require('os').totalmem() as number) / 1024 / 1024)
+                // 3GB 起步 + 每模组 25MB，上限 20GB / 物理内存的 55%
+                const want = Math.min(20480, Math.round(totalMb * 0.55), 3072 + jarCount * 25)
+                const mem = Math.max(4096, Math.round(want / 1024) * 1024)
+                const st2 = state()
+                setProjects(st2.projects.map((x) => (x.id === proj2.id ? { ...x, memoryMb: mem } : x)))
+                persist()
+                progress(`已按 ${jarCount} 个模组自动设置内存 ${Math.round(mem / 1024)} GB`)
+              }
+            } catch {
+              /* 设置失败不影响导入 */
             }
           } catch {
             /* 加载器装失败也不回滚项目，用户可以在组件库里手动应用 */
@@ -1207,14 +1565,52 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
       }
     ) => {
       try {
-        const r = await searchProjects(payload.kind, payload.query, {
-          loader: payload.loader as never,
-          mcVersion: payload.mcVersion,
-          offset: payload.offset ?? 0,
-          limit: payload.limit ?? 30,
-          index: payload.index
-        })
-        return { ok: true, ...r }
+        const isZh = /[\u4e00-\u9fff]/.test(payload.query || '')
+        // 中文查询：先反查英文名，几条查询并发跑，结果去重合并
+        const queries = isZh ? [payload.query, ...resolveEnglishQueries(payload.query)] : [payload.query]
+        const results = await Promise.all(
+          queries.slice(0, 4).map((q) =>
+            searchProjects(payload.kind, q, {
+              loader: payload.loader as never,
+              mcVersion: payload.mcVersion,
+              offset: payload.offset ?? 0,
+              limit: payload.limit ?? 30,
+              index: payload.index
+            }).catch(() => ({ hits: [], total_hits: 0, offset: 0, limit: 0 }))
+          )
+        )
+        const seen = new Set<string>()
+        const hits = []
+        for (const r of results) {
+          for (const h of (r as { hits?: unknown[] }).hits ?? []) {
+            const id = (h as { project_id?: string }).project_id
+            if (!id || seen.has(id)) continue
+            seen.add(id)
+            hits.push(h)
+          }
+        }
+        if (isZh && queries.length > 1) {
+          const enQueries = queries.slice(1).map((x) => x.toLowerCase())
+          hits.sort((a, b) => {
+            const sa = a as { title?: string; slug?: string }
+            const sb = b as { title?: string; slug?: string }
+            const score = (h: { title?: string; slug?: string }): number => {
+              const t = (h.title ?? '').toLowerCase()
+              const sl = (h.slug ?? '').toLowerCase()
+              return enQueries.some((q) => sl === q || t === q || t.startsWith(q) || sl.includes(q)) ? 0 : 1
+            }
+            return score(sa) - score(sb)
+          })
+        }
+        const first = results[0] as { total_hits?: number; offset?: number; limit?: number }
+        return {
+          ok: true,
+          hits,
+          total_hits: Math.max(...results.map((r) => (r as { total_hits?: number }).total_hits ?? 0)),
+          offset: first.offset ?? 0,
+          limit: first.limit ?? (payload.limit ?? 30),
+          translated: isZh ? queries.slice(1) : []
+        }
       } catch (e) {
         return { ok: false, message: e instanceof Error ? e.message : String(e) }
       }
@@ -1358,7 +1754,7 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
       const s = state()
       const json = await getVersionJson(project.versionId || project.mcVersion, s.settings.downloadSource)
       const major = json.javaVersion?.majorVersion ?? 8
-      const javaExe = project.javaPath || s.settings.javaPath || findInstalledJava(major) || 'javaw.exe'
+      const javaExe = project.javaPath || s.settings.javaPath || findInstalledJava(major) || JAVA_BIN
       const account = s.accounts.find((a) => a.id === s.activeAccountId)
       if (!account) return { ok: false, message: '请先登录账号' }
       const cmd = await buildCommand(project, account, s.settings, javaExe)
@@ -1400,11 +1796,26 @@ export function registerMinecraftIpc(getWindow: () => BrowserWindow | null): voi
     return downloadInstaller(latest, (loaded, total) => emit('update:progress', { loaded, total }))
   })
 
-  ipcMain.handle('update:apply', async (_e, installerPath: string) => {
-    const r = runInstaller(installerPath)
-    // 安装器会主动结束本进程；装完后由安装脚本重新拉起新版本
-    if (r.ok) setTimeout(() => app.exit(0), 1500)
+  ipcMain.handle('update:apply', async (_e, installerPath: string, toVersion?: string) => {
+    // 记录"从哪个版本升到哪个版本"，下次启动提示用
+    if (toVersion) markUpdatePending(toVersion)
+    const r = runInstaller(installerPath, '', toVersion)
+    // macOS 走「打开下载页 / electron-updater」，不在应用内替换文件，所以不退出
+    if (r.ok && isMac) return r
+    if (r.ok) {
+      // 关键：守卫脚本已经拉起，这里主动退出（不是 exit），让文件句柄干净释放
+      setTimeout(() => {
+        app.quit()
+        // 兜底：3 秒后还没退干净就强杀自己，保证安装器能改文件
+        setTimeout(() => app.exit(0), 3000)
+      }, 400)
+    }
     return r
+  })
+
+  ipcMain.handle('update:consumeUpdated', () => {
+    // 必须用静态 import：打包后 require('../update') 拿不到模块，会静默失败
+    return noteUpdatedLaunch()
   })
 
   ipcMain.handle('update:open', async (_e, url: string) => {

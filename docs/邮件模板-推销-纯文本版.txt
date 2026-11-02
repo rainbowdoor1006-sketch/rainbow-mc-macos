@@ -1,0 +1,19 @@
+RAINBOW MC · 开源 Minecraft 启动器
+
+装上就能玩，不用配 Java、不用手动装加载器。
+
+· 一键安装加载器：Forge / NeoForge / Fabric / Quilt，自动补齐依赖
+· 整合包拖进去就导入：566 个模组 / 1.43 GB 实测 5.1 分钟
+· 崩溃给结论：读日志判定原因（内存不足 / 缺前置 / 驱动 / 存档损坏…共 29 类）
+· 房间码联机：不用买服务器，一条邀请码就能和朋友一起玩
+· 启动前体检：估算内存 / 显存 / CPU 负载，还能给模组做静态检查
+
+仅保留离线登录，不包含任何在线账号与授权实现；代码可自行审计、二次开发。
+
+前往 GitHub：https://github.com/rainbowdoor1006-sketch
+下载安装包：https://github.com/rainbowdoor1006-sketch/rainbow-mc/releases/latest
+源码：https://github.com/rainbowdoor1006-sketch/rainbow-mc
+
+RAINBOW MC · Windows 10 / 11 64 位 · MIT 许可
+本项目与 Mojang Studios / Microsoft 无关，Minecraft 是 Mojang Studios 的商标。
+如不想再收到相关邮件，回复「退订」即可。

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useI18n } from '@/i18n'
+import { CATEGORY_NAME, lookupError } from '@shared/errors'
 import { IconFolder, IconWarn } from './Icons'
 
 /** 选择已安装版本 → 新建项目 */
@@ -221,28 +222,160 @@ export function MsLogin({
 export function LaunchError({
   errorCode,
   message,
+  diagnosis,
   onClose,
   onOpenLogs
 }: {
   errorCode: string
   message?: string
+  diagnosis?: {
+    code: string
+    category: string
+    title: string
+    confidence: 'high' | 'medium' | 'low'
+    evidence: string[]
+    steps: string[]
+    facts: string[]
+  } | null
   onClose: () => void
   onOpenLogs: () => void
 }): React.ReactElement {
   const { t } = useI18n()
+  const info = lookupError(errorCode)
+  const [copied, setCopied] = useState(false)
+
+  const copyAll = async (): Promise<void> => {
+    const text = [
+      `错误码：${errorCode}${info ? '（' + CATEGORY_NAME[info.category] + '）' : ''}`,
+      diagnosis ? `判定：${diagnosis.title}` : info ? `类型：${info.title}` : '',
+      diagnosis && diagnosis.facts.length ? '关键数据：' + diagnosis.facts.join('；') : '',
+      diagnosis && diagnosis.evidence.length ? '日志证据：' + diagnosis.evidence.join(' | ') : '',
+      message ? `详情：${message}` : '',
+      info ? '可能原因：' + info.reasons.join('；') : '',
+      (diagnosis?.steps ?? info?.steps ?? []).map((x, i) => `${i + 1}. ${x}`).join(' ')
+    ]
+      .filter(Boolean)
+      .join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <div className="overlay">
-      <div className="modal">
-        <div className="modal-icon" style={{ background: 'rgba(255,107,129,.12)', color: 'var(--err)' }}>
-          <IconWarn />
+      <div className="modal" style={{ width: 640, maxHeight: '86vh', overflowY: 'auto' }}>
+        <div className="row" style={{ gap: 10, alignItems: 'center', marginBottom: 6 }}>
+          <span className="tag" style={{ background: 'rgba(255,107,129,.14)', color: 'var(--err)' }}>
+            {info ? CATEGORY_NAME[info.category] : '未分类'}
+          </span>
+          <span className="dim mono" style={{ fontSize: 11.5 }}>
+            {errorCode}
+          </span>
         </div>
-        <h2>
-          {t('launch.errorTitle')}（{errorCode}）
-        </h2>
-        {message && <p className="dim" style={{ marginTop: 8, fontSize: 12.5 }}>{message}</p>}
+
+        <h2 style={{ marginBottom: 6 }}>{diagnosis?.title || (info ? info.title : t('launch.errorTitle'))}</h2>
+        {message && (
+          <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.8, wordBreak: 'break-all' }}>
+            {message}
+          </p>
+        )}
+
+        {diagnosis && (
+          <>
+            <div className="card tight" style={{ marginTop: 12, borderColor: 'rgba(127,182,155,.5)' }}>
+              <div className="card-title">关键数据</div>
+              {diagnosis.facts.length > 0 && (
+                <ul className="dim" style={{ fontSize: 12, lineHeight: 1.85, paddingLeft: 18, marginTop: 6 }}>
+                  {diagnosis.facts.map((f2, i2) => (
+                    <li key={i2}>{f2}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {diagnosis.evidence.length > 0 && (
+              <div className="card tight" style={{ marginTop: 10 }}>
+                <div className="card-title">日志证据（这就是判定的依据）</div>
+                <div
+                  className="mono dim"
+                  style={{
+                    fontSize: 11.5,
+                    lineHeight: 1.7,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    maxHeight: 130,
+                    overflowY: 'auto'
+                  }}
+                >
+                  {diagnosis.evidence.join('\n')}
+                </div>
+              </div>
+            )}
+
+            <div className="card tight" style={{ marginTop: 10, borderColor: 'rgba(201,170,106,.45)' }}>
+              <div className="card-title">针对这个问题怎么做</div>
+              <ol className="dim" style={{ fontSize: 12.5, lineHeight: 1.95, paddingLeft: 20 }}>
+                {diagnosis.steps.map((r, i2) => (
+                  <li key={i2}>{r}</li>
+                ))}
+              </ol>
+            </div>
+          </>
+        )}
+
+        {!diagnosis && info && (
+          <>
+            <div className="card tight" style={{ marginTop: 12 }}>
+              <div className="card-title">可能的原因</div>
+              <ul className="dim" style={{ fontSize: 12.5, lineHeight: 1.9, paddingLeft: 18 }}>
+                {info.reasons.map((r, i2) => (
+                  <li key={i2}>{r}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="card tight" style={{ marginTop: 10, borderColor: 'rgba(127,182,155,.45)' }}>
+              <div className="card-title">怎么解决（按顺序试）</div>
+              <ol className="dim" style={{ fontSize: 12.5, lineHeight: 1.95, paddingLeft: 20 }}>
+                {info.steps.map((r, i2) => (
+                  <li key={i2}>{r}</li>
+                ))}
+              </ol>
+            </div>
+          </>
+        )}
+
+        {!diagnosis && !info && (
+          <div className="card tight" style={{ marginTop: 12 }}>
+            <div className="card-title">怎么排查</div>
+            <ol className="dim" style={{ fontSize: 12.5, lineHeight: 1.95, paddingLeft: 20 }}>
+              <li>点下方「打开日志目录」，查看 latest.log 的最后 30 行</li>
+              <li>日志里出现 OutOfMemoryError → 去版本设置调大内存</li>
+              <li>出现 Missing / NoSuchMod → 缺少前置模组，去模组页补全</li>
+              <li>出现 nvoglv64 / igd 字样 → 显卡驱动问题，更新驱动</li>
+            </ol>
+          </div>
+        )}
+
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>
             {t('launch.errorAck')}
+          </button>
+          <button className="btn" onClick={() => void copyAll()}>
+            {copied ? '已复制' : '复制错误信息'}
+          </button>
+          <button
+            className="btn"
+            onClick={() => {
+              void window.api.project.summary('').catch(() => undefined)
+              void window.api.logs.feedback({ extra: `错误码 ${errorCode}\n${message ?? ''}` })
+            }}
+          >
+            打包反馈
           </button>
           <button className="btn primary" onClick={onOpenLogs}>
             <IconFolder />
@@ -265,7 +398,17 @@ export function LaunchOverlay({
   onKill?: () => void
 }): React.ReactElement {
   const { t } = useI18n()
-  const tail = useMemo(() => lines.slice(-200), [lines])
+  const [logQuery, setLogQuery] = useState('')
+  const [onlyErr, setOnlyErr] = useState(false)
+  const tail = useMemo(() => {
+    let arr = lines.slice(-400)
+    if (onlyErr) arr = arr.filter((l) => /error|exception|caused by|fatal|崩溃/i.test(l))
+    if (logQuery.trim()) {
+      const q = logQuery.trim().toLowerCase()
+      arr = arr.filter((l) => l.toLowerCase().includes(q))
+    }
+    return arr.slice(-200)
+  }, [lines, logQuery, onlyErr])
   return (
     <div className="overlay">
       <div className="modal" style={{ width: 720 }}>

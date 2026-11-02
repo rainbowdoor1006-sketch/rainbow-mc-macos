@@ -1,6 +1,6 @@
 {
   "name": "rainbow-mc",
-  "version": "0.2.36",
+  "version": "0.4.9",
   "description": "RAINBOW MC — Minecraft Launcher",
   "main": "out/main/index.js",
   "author": "RAINBOW MC",
@@ -11,7 +11,11 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "dist": "electron-vite build && electron-builder --win portable --x64",
-    "dist:dir": "electron-vite build && electron-builder --win --dir"
+    "dist:dir": "electron-vite build && electron-builder --win --dir",
+    "dist:mac": "electron-vite build && electron-builder --mac dmg zip --universal --config.directories.output=release-mac",
+    "dist:mac:arm64": "electron-vite build && electron-builder --mac dmg zip --arm64 --config.directories.output=release-mac",
+    "dist:mac:x64": "electron-vite build && electron-builder --mac dmg zip --x64 --config.directories.output=release-mac",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "adm-zip": "^0.6.1"
@@ -82,6 +86,51 @@
     "portable": {
       "requestExecutionLevel": "user",
       "artifactName": "RAINBOWMC-${version}-portable.${ext}"
+    },
+    "mac": {
+      "category": "public.app-category.games",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "darkModeSupport": true,
+      "icon": "build/icon-1024.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "artifactName": "RAINBOWMC-macOS-${version}-${arch}.${ext}",
+      "extendInfo": {
+        "LSMinimumSystemVersion": "11.0",
+        "NSHighResolutionCapable": true,
+        "NSHumanReadableCopyright": "Copyright © 2026 RAINBOW DOOR 彩虹门社团"
+      }
+    },
+    "dmg": {
+      "title": "RAINBOW MC ${version}",
+      "artifactName": "RAINBOWMC-macOS-${version}-${arch}.${ext}",
+      "contents": [
+        {
+          "x": 140,
+          "y": 170,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 170,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   }
 }

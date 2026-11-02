@@ -1,0 +1,13 @@
+﻿{
+  "ok": true,
+  "latest": {
+    "version": "0.4.9",
+    "versionCode": 409,
+    "downloadUrl": "https://rainbowdoor.icu/download/RAINBOWMC-0.4.9-setup.exe",
+    "sha256": "9b683ff53b5b5388379e65d622cdea5dd33688c2812ccc4eadf33898d0119c8b",
+    "size": 81913072,
+    "notes": "Win95 风格安装窗口：安装时弹窗、装完自动关闭再拉起；无 PowerShell 窗口",
+    "mandatory": false,
+    "sig": "cgUkk8fCrwze7MMQqs7JhwqjJ/UGdAD039s0YB84NcusqDzOP82SKe21pFTGWrv4Zx9MJ8qGDD0woTH28KIwDQ=="
+  }
+}

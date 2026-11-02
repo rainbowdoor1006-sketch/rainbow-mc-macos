@@ -87,6 +87,15 @@
   ; 记录安装位置
   WriteRegStr HKCU "Software\RAINBOW MC" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RAINBOW MC" "InstallLocation" "$INSTDIR"
+  ; 升级时模板不会重写这些键，必须自己补，否则「控制面板卸载」会指向旧目录
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RAINBOW MC" "DisplayName" "RAINBOW MC"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RAINBOW MC" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RAINBOW MC" "Publisher" "RAINBOW DOOR"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RAINBOW MC" "DisplayIcon" "$INSTDIR\RAINBOW MC.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RAINBOW MC" "UninstallString" "$\"$INSTDIR\Uninstall RAINBOW MC.exe$\""
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RAINBOW MC" "QuietUninstallString" "$\"$INSTDIR\Uninstall RAINBOW MC.exe$\" /S"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RAINBOW MC" "NoModify" "1"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RAINBOW MC" "NoRepair" "1"
 !macroend
 
 ; 卸载：模板会自己删程序文件；这里不做任何 data/ 相关操作

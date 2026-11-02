@@ -61,7 +61,29 @@ export function InstancePanel({
   const [saves, setSaves] = useState<SaveInfo[]>([])
   const [modQuery, setModQuery] = useState('')
   const [mem, setMem] = useState({ totalMb: 8192, autoMb: 4096 })
+  const [summary, setSummary] = useState<{
+    mods: number
+    shaders: number
+    resourcePacks: number
+    saves: number
+    totalMb: number
+    breakdown: { key: string; label: string; mb: number }[]
+  } | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [checkResult, setCheckResult] = useState<{
+    ok: boolean
+    jars: number
+    mods: number
+    elapsedMs: number
+    issues: { kind: string; level: string; title: string; detail: string; files?: string[] }[]
+  } | null>(null)
   const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    void window.api.project.summary(project.id).then((r) => {
+      if (r.ok && r.summary) setSummary(r.summary as never)
+    })
+  }, [project.id])
 
   const [name, setName] = useState(project.name)
   const [desc, setDesc] = useState(project.desc ?? '')
@@ -212,6 +234,105 @@ export function InstancePanel({
                       {favorite ? '★ ' + t('inst.favorited') : '☆ ' + t('inst.addFavorite')}
                     </button>
                   </div>
+                </div>
+
+                <div className="inst-card">
+                  <h3>概况</h3>
+                  <div className="dim" style={{ fontSize: 12.5, lineHeight: 2 }}>
+                    <div>
+                      体积 <b style={{ color: 'var(--txt)' }}>{summary ? summary.totalMb + ' MB' : '统计中…'}</b>
+                      {summary && summary.breakdown.length > 0 && (
+                        <span style={{ marginLeft: 8, fontSize: 11.5 }}>
+                          （{summary.breakdown.map((b) => `${b.label} ${b.mb}M`).join(' · ')}）
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      模组 <b style={{ color: 'var(--txt)' }}>{summary?.mods ?? '—'}</b> 个 · 光影{' '}
+                      <b style={{ color: 'var(--txt)' }}>{summary?.shaders ?? '—'}</b> 个 · 资源包{' '}
+                      <b style={{ color: 'var(--txt)' }}>{summary?.resourcePacks ?? '—'}</b> 个 · 存档{' '}
+                      <b style={{ color: 'var(--txt)' }}>{summary?.saves ?? '—'}</b> 个
+                    </div>
+                    <div>
+                      上次启动{' '}
+                      <b style={{ color: 'var(--txt)' }}>
+                        {project.lastBootMs ? (project.lastBootMs / 1000).toFixed(1) + ' 秒' : '—'}
+                      </b>
+                      {project.bestBootMs ? `（最快 ${(project.bestBootMs / 1000).toFixed(1)} 秒）` : ''}
+                      {project.launchCount ? ` · 共启动 ${project.launchCount} 次` : ''}
+                    </div>
+                  </div>
+                  <div className="quick-grid" style={{ marginTop: 10 }}>
+                    <button
+                      className="btn"
+                      disabled={checking}
+                      onClick={() => {
+                        setChecking(true)
+                        setCheckResult(null)
+                        void window.api.project.modcheck(project.id).then((r) => {
+                          setChecking(false)
+                          if (r.ok && r.result) setCheckResult(r.result as never)
+                          else setMsg(r.message || '体检失败')
+                        })
+                      }}
+                    >
+                      {checking ? '正在体检…' : '模组体检'}
+                    </button>
+                    <button
+                      className="btn"
+                      disabled={!checkResult || !checkResult.issues.some((i) => i.kind === 'missingDep')}
+                      onClick={() => {
+                        const deps = (checkResult?.issues ?? [])
+                          .filter((i) => i.kind === 'missingDep')
+                          .map((i) => i.title.replace('缺少前置模组：', '').trim())
+                        if (!deps.length) return
+                        setMsg(`正在安装 ${deps.length} 个前置…`)
+                        void (async () => {
+                          let done = 0
+                          for (const d of deps) {
+                            const r2 = await window.api.project.installDep(project.id, d)
+                            if (r2.ok) done++
+                          }
+                          setMsg(`前置安装完成：成功 ${done}/${deps.length}，请重新体检`)
+                        })()
+                      }}
+                    >
+                      安装全部前置
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={() =>
+                        void window.api.logs.feedback({ projectId: project.id }).then((r) => {
+                          setMsg(r.ok ? `已生成反馈包（${r.sizeMb} MB）` : r.message || '打包失败')
+                        })
+                      }
+                    >
+                      打包反馈
+                    </button>
+                  </div>
+                  {checkResult && (
+                    <div style={{ marginTop: 10, fontSize: 12.5, lineHeight: 1.8 }}>
+                      <div className="dim">
+                        共 {checkResult.jars} 个 jar，识别 {checkResult.mods} 个模组，用时{' '}
+                        {checkResult.elapsedMs} ms
+                      </div>
+                      {checkResult.issues.length === 0 ? (
+                        <div style={{ color: 'var(--jade)' }}>未发现问题</div>
+                      ) : (
+                        <ul style={{ paddingLeft: 18, margin: '6px 0 0' }}>
+                          {checkResult.issues.slice(0, 8).map((it, i) => (
+                            <li key={i} style={{ color: it.level === 'error' ? 'var(--err)' : 'var(--warn)' }}>
+                              <b>{it.title}</b>
+                              <div className="dim" style={{ fontSize: 11.5 }}>
+                                {it.detail}
+                                {it.files ? `（${it.files.slice(0, 3).join('、')}）` : ''}
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="inst-card">

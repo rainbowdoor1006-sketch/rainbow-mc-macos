@@ -1,9 +1,11 @@
-import { app } from 'electron'
+import { app, shell } from 'electron'
+import { isMac, updatePackageName } from './platform'
 import { createHash } from 'crypto'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'fs'
 import { dirname, join } from 'path'
 import { spawn } from 'child_process'
 import { paths, installRoot } from './paths'
+import { verifyManifest } from './minecraft/update'
 
 /** 版本号口径必须与服务端一致：MAJOR * 100 + MINOR * 10 + PATCH */
 export function versionCodeOf(version: string): number {
@@ -34,7 +36,9 @@ export function compareVersion(a: string, b: string): number {
   }
   return 0
 }
-export const UPDATE_ENDPOINT = 'https://rainbowdoor.icu/api/launcher/version'
+// 测试 / 自建服务器可用环境变量覆盖（仅影响更新地址，不改变验签逻辑）
+export const UPDATE_ENDPOINT =
+  process.env['RM_UPDATE_ENDPOINT'] || 'https://rainbowdoor.icu/api/launcher/version'
 
 export interface LatestInfo {
   version: string
@@ -46,6 +50,8 @@ export interface LatestInfo {
   mandatory?: boolean
   minSupported?: string
   publishedAt?: string
+  /** 清单签名（base64，Ed25519），对 version/sha256/size/downloadUrl 计算 */
+  sig?: string
 }
 
 export type UpdateState = 'older' | 'same' | 'newer' | 'unknown'
@@ -65,7 +71,9 @@ function normalizeLatest(raw: Record<string, unknown> | undefined): LatestInfo |
   if (!/^\d+\.\d+\.\d+$/.test(version)) return null
   const code = Number(raw.versionCode ?? versionCodeOf(version))
   const url = String(raw.downloadUrl ?? '')
-  if (!/^https:\/\//i.test(url)) return null
+  // 只允许 https；例外：本机回环地址允许 http（本地/自建更新服务）
+  const isLoopbackHttp = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)
+  if (!/^https:/i.test(url) && !isLoopbackHttp) return null
   return {
     version,
     versionCode: Number.isFinite(code) ? code : versionCodeOf(version),
@@ -75,7 +83,8 @@ function normalizeLatest(raw: Record<string, unknown> | undefined): LatestInfo |
     notes: raw.notes ? String(raw.notes) : undefined,
     mandatory: Boolean(raw.mandatory),
     minSupported: raw.minSupported ? String(raw.minSupported) : undefined,
-    publishedAt: raw.publishedAt ? String(raw.publishedAt) : undefined
+    publishedAt: raw.publishedAt ? String(raw.publishedAt) : undefined,
+    sig: raw.sig ? String(raw.sig) : undefined
   }
 }
 
@@ -101,6 +110,18 @@ export async function checkForUpdate(channel = 'stable'): Promise<CheckResult> {
     }
     const latest = normalizeLatest(data.latest as Record<string, unknown> | undefined)
     if (!latest) return { ok: false, state: 'unknown', local, channel, message: '版本信息不完整' }
+    // 先验签：清单由服务器返回，sha256 也在里面，同源就等于没有校验。
+    // 公钥内置在程序里，攻击者必须拿到私钥才能伪造，服务器被拿下也推不了恶意包。
+    const sigErr = verifyManifest({
+      version: latest.version,
+      sha256: latest.sha256,
+      size: latest.size,
+      downloadUrl: latest.downloadUrl,
+      sig: latest.sig
+    })
+    if (sigErr) {
+      return { ok: false, state: 'unknown', local, channel, message: sigErr }
+    }
     // 用语义化版本比较，而不是 versionCode：
     // code 的公式（MAJOR*100+MINOR*10+PATCH）在 0.3.0 这种场景会倒退，
     // 版本号本身比较永远单调，服务端换公式也不受影响。
@@ -178,32 +199,284 @@ export async function downloadInstaller(
   }
 }
 
-/** 运行安装程序：静默、保留 data、装到当前目录 */
 /**
- * 启动安装程序。
- * 注意：NSIS 静默安装会主动结束正在运行的启动器进程，所以这里「只负责拉起安装器」，
- * 随后调用方会立刻退出自己；安装完成后由安装脚本负责重新启动启动器。
+ * 应用更新：写一个「守卫脚本」→ 启动器自己退出 → 脚本等进程真的没了才装 →
+ * 装完（成功或失败）都尝试把启动器拉起来。
+ *
+ * 为什么不能像以前那样「spawn 安装器 + 1.5 秒后 self.exit」：
+ *  1. 安装器（NSIS）会先跑旧卸载器删程序文件，此时启动器还在跑，文件被占用；
+ *  2. 目录一旦不一致（比如 /D 传错），旧卸载器删的其实是"注册表里那个目录"，
+ *     会出现「原来的应用被删了、新目录没装成」的双输局面（2026-10-31 已复现）。
+ * 所以：先退出、再安装、装完自检、失败也要把用户拉回来。
  */
-export function runInstaller(installerPath: string): { ok: boolean; message?: string } {
-  const dir = installRoot()
-  // 静默安装：不给用户增加点击步骤；装完由 installer.nsh 的 Silent 分支自动拉起启动器。
-  // （前提：启动器必须先退出，否则 data/ 被占用会导致搬迁退化——见 runInstaller 注释）
-  const args = ['/S', '/KEEPDATA']
-  if (dir) args.push(`/D=${dir}`)
-  // 直接拉起安装程序；调用方会在 ~1.5 秒后退出启动器，
-  // 等安装程序真正开始搬 data/ 时，这边的文件句柄已经释放了。
-  // （不要用 cmd 包一层：Node 给带空格的参数加引号会把 & 分隔的命令搞坏）
+export interface ApplyResult {
+  ok: boolean
+  message?: string
+}
+
+/** 读注册表里记录的安装位置（安装器按它决定"上一份装在哪"） */
+function registeredInstallDir(): string {
   try {
-    // windowsVerbatimArguments：NSIS 的 /D= 后面必须是「原样未加引号」的路径，
-    // Node 默认会给含空格的参数加引号，导致 /D 被截断或失效，装到错误目录。
-    spawn(installerPath, args, {
-      detached: true,
-      stdio: 'ignore',
-      windowsVerbatimArguments: true
-    }).unref()
+    const { execFileSync } = require('child_process') as typeof import('child_process')
+    const out = execFileSync(
+      'reg',
+      ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\RAINBOW MC', '/v', 'InstallLocation'],
+      { encoding: 'utf8', windowsHide: true, timeout: 5000 }
+    )
+    const m = out.match(/InstallLocation\s+REG_SZ\s+(.+)/)
+    return m ? m[1].trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+/** 启动器可执行文件名（用于判断"进程是否真的退干净了"） */
+const APP_EXE_NAME = "RAINBOW MC.exe"
+
+/**
+ * 应用更新。
+ *
+ * 目标时序（用户要求）：
+ *   下载完成 → **弹出 Win95 风格安装窗口** → 窗口里跑静默安装（启动器退出，让文件解锁）
+ *   → 安装完成后窗口停留几秒（播完结束音）→ 关闭窗口 → 拉起新版本启动器
+ *
+ * 所以这里不自己画界面，而是交给一个 **PowerShell + WinForms** 的小窗口：
+ *   · 只有这一个窗口，安装器本身用 -WindowStyle Hidden，不再弹一堆黑框；
+ *   · 声音由这个窗口播放（data\sounds 下的 wav）；
+ *   · 窗口关闭后才启动启动器，不会出现「先拉起启动器再弹窗」。
+ */
+
+function psQuote(v: string): string {
+  return v.replace(/'/g, "''")
+}
+
+/** 生成 HTA 安装窗口（HTML + CSS 画 Win95 界面，无控制台、无 PowerShell 窗口） */
+function buildHta(installerPath: string, dir: string, exe: string, from: string, to: string): string {
+  const esc = (v: string): string => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const jsStr = (v: string): string => v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+
+  const startWav = `${dir}\\data\\sounds\\win95-start.wav`
+  const stopWav = `${dir}\\data\\sounds\\win95-stop.wav`
+  const installArgs = `/S /KEEPDATA${dir ? ` /D=${dir}` : ''}`
+  const cmd = `"${installerPath}" ${installArgs}`
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=9" />
+<title>RAINBOW MC 更新程序</title>
+<hta:application id="rmUpdate" border="none" caption="no" showintaskbar="yes" scroll="no" singleinstance="yes" contextmenu="no" selection="no" />
+<style>
+  html,body{margin:0;padding:0;background:#c0c0c0;overflow:hidden;
+    font-family:"MS Sans Serif","Microsoft YaHei",Tahoma,sans-serif;font-size:12px;cursor:default}
+  .win{width:466px;height:186px;background:#c0c0c0;border-top:2px solid #fff;border-left:2px solid #fff;
+    border-right:2px solid #808080;border-bottom:2px solid #808080}
+  .title{height:24px;background:#000080;color:#fff;font-weight:bold;font-size:12px;line-height:24px;padding-left:6px;position:relative}
+  .title .x{position:absolute;right:4px;top:3px;width:16px;height:14px;background:#c0c0c0;color:#000;
+    border-top:1px solid #fff;border-left:1px solid #fff;border-right:1px solid #808080;border-bottom:1px solid #808080;
+    text-align:center;line-height:12px;font-weight:bold}
+  .body{padding:12px 14px 0 14px}
+  .l1{font-weight:bold;margin-bottom:4px}
+  .l2{margin-bottom:10px}
+  .bar{height:22px;background:#fff;border-top:2px solid #808080;border-left:2px solid #808080;
+    border-right:2px solid #fff;border-bottom:2px solid #fff;padding:2px;overflow:hidden}
+  .seg{float:left;width:9px;height:14px;margin-right:3px;background:#fff}
+  .seg.on{background:#000080}
+  .pct{text-align:right;margin-top:3px;font-size:11px}
+</style>
+</head>
+<body onload="boot()">
+<bgsound id="snd" src="${esc(startWav)}" />
+<div class="win" id="win" style="display:none">
+  <div class="title">RAINBOW MC 更新程序<div class="x">×</div></div>
+  <div class="body">
+    <div class="l1" id="l1">RAINBOW MC 2026 ${esc(from)} 正在更新到 ${esc(to)}</div>
+    <div class="l2" id="l2">正在安装更新文件，请不要关闭电源…</div>
+    <div class="bar" id="bar"></div>
+    <div class="pct" id="pct">0%</div>
+  </div>
+</div>
+<script>
+var INST = '${jsStr(installerPath)}';
+var EXE  = '${jsStr(exe)}';
+var WAV_STOP = '${jsStr(stopWav)}';
+var ARGS = '${jsStr(installArgs)}';
+var SEGS = 32;
+var pct = 0, running = true, done = false;
+
+function el(id){ return document.getElementById(id); }
+
+function drawBar(){
+  var bar = el('bar'), html = '', i;
+  var on = Math.round(pct / 100 * SEGS);
+  for (i = 0; i < SEGS; i++) {
+    html += '<div class="seg' + (i < on ? ' on' : '') + '"></div>';
+  }
+  bar.innerHTML = html;
+  el('pct').innerHTML = Math.round(pct) + '%';
+}
+
+function tick(){
+  if (running && pct < 90) { pct += 1.5; drawBar(); }
+  setTimeout(tick, 120);
+}
+
+function playStop(){
+  try {
+    var b = document.createElement('bgsound');
+    b.src = WAV_STOP;
+    document.body.appendChild(b);
+  } catch (e) {}
+}
+
+function boot(){
+  // 居中显示
+  window.resizeTo(474, 194);
+  var x = (screen.availWidth - 474) / 2, y = (screen.availHeight - 194) / 2;
+  window.moveTo(x, y);
+  el('win').style.display = 'block';
+  drawBar();
+  tick();
+  // 抢焦点，确保窗口在最前面（HTA 没有 alwaysOnTop）
+  try { window.focus(); self.focus(); } catch (e) {}
+
+  // 等旧进程退干净（最多 20 秒），这段时间窗口一直显示
+  var waited = 0;
+  var probe = setInterval(function(){
+    waited += 500;
+    if (waited > 20000) { clearInterval(probe); runInstall(); }
+  }, 500);
+
+  // 旧启动器退出后立刻装（用 cmd 探测，静默）
+  var timer2 = setInterval(function(){
+    var running = shell().Run('cmd /c tasklist /FI "IMAGENAME eq RAINBOW MC.exe" /NH | find "RAINBOW MC.exe"', 0, true);
+    if (running !== 0) {
+      clearInterval(probe); clearInterval(timer2);
+      runInstall();
+    }
+  }, 700);
+}
+
+function shell(){
+  if (!window.__sh) { window.__sh = new ActiveXObject('WScript.Shell'); }
+  return window.__sh;
+}
+
+function runInstall(){
+  if (done) { return; }
+  done = true;
+  el('l2').innerHTML = '正在安装更新文件，请不要关闭电源…';
+  var cmd = '"' + INST + '"' + ' ' + ARGS;
+  var code = 1;
+  try { code = shell().Run(cmd, 0, true); } catch (e) { code = 1; }
+
+  running = false;
+  pct = 100;
+  drawBar();
+
+  if (code === 0) {
+    el('l1').innerHTML = 'RAINBOW MC 2026 已更新到 ${jsStr(to)}';
+    el('l2').innerHTML = '更新完成，正在启动启动器…';
+    playStop();
+    // 先让窗口消失，再拉起启动器（避免先起启动器、后关窗）
+    setTimeout(function(){ el('win').style.display = 'none'; }, 3000);
+    setTimeout(function(){ launch(); }, 3350);
+    setTimeout(function(){ try { window.close(); } catch (e) {} }, 4200);
+  } else {
+    el('l1').innerHTML = '更新没有完成';
+    el('l2').innerHTML = '已保留原版本，正在重新打开启动器…';
+    setTimeout(function(){ el('win').style.display = 'none'; }, 2000);
+    setTimeout(function(){ launch(); }, 2350);
+    setTimeout(function(){ try { window.close(); } catch (e) {} }, 3200);
+  }
+}
+
+function launch(){
+  try { shell().Run('"' + EXE + '"', 1, false); } catch (e) {}
+  setTimeout(function(){ window.close(); }, 400);
+}
+</script>
+</body>
+</html>
+`
+
+  // mshta/IE 按 ANSI 读文件，直接把中文写进去会乱码（实测）。
+  // 这里把非 ASCII 字符全部转成 HTML 数值实体，任何编码下都能正确显示。
+  return html.replace(/[^\x00-\x7F]/g, (ch) => '&#' + ch.charCodeAt(0) + ';')
+}
+
+export function runInstaller(installerPath: string, fromVersion = '', toVersion = ''): ApplyResult {
+  // macOS：ad-hoc 签名版不能自己替换 .app（会破坏签名），
+  // 改成打开下载页，用户把新的拖进「应用程序」即可。数据在 ~/Library/Application Support，不受影响。
+  if (isMac) {
+    void shell.openExternal(process.env['RM_UPDATE_PAGE'] || 'https://rainbowdoor.icu/download/')
+    return {
+      ok: true,
+      message: `已打开下载页，请下载 ${updatePackageName(toVersion || '')} 并拖入「应用程序」完成更新`
+    }
+  }
+  const dir = String(installRoot() ?? '')
+  const registered = registeredInstallDir()
+  if (registered && dir && registered.toLowerCase() !== dir.toLowerCase()) {
+    return {
+      ok: false,
+      message: `安装目录与注册表不一致（注册表：${registered}，当前：${dir}），已取消以免误删。请手动安装一次修复。`
+    }
+  }
+  if (!existsSync(installerPath)) return { ok: false, message: '安装包不存在，请重新下载' }
+
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    fs.mkdirSync(paths.cache(), { recursive: true })
+    const htaPath = path.join(paths.cache(), 'update-window.hta')
+    const exe = app.getPath('exe')
+
+    fs.writeFileSync(
+      htaPath,
+      buildHta(installerPath, dir, exe, fromVersion || app.getVersion(), toVersion),
+      'utf8'
+    )
+
+    const { spawn } = require('child_process') as typeof import('child_process')
+    spawn('mshta.exe', [htaPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
     return { ok: true }
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export function noteUpdatedLaunch(): { from?: string; to?: string } | null {
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const p = path.join(paths.cache(), 'updated.json')
+    if (!fs.existsSync(p)) return null
+    // 剥离 BOM：PowerShell/记事本写出来的 JSON 带 BOM，会让 JSON.parse 直接抛错
+    const raw = String(fs.readFileSync(p, 'utf8')).replace(/^\uFEFF/, '')
+    const j = JSON.parse(raw) as { from?: string; to?: string }
+    fs.unlinkSync(p)
+    return j
+  } catch {
+    return null
+  }
+}
+
+/** 记录"即将更新"的标记，下次启动就能知道从哪个版本升上来的 */
+export function markUpdatePending(to: string): void {
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const dir = paths.cache()
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(
+      path.join(dir, 'updated.json'),
+      JSON.stringify({ from: app.getVersion(), to, at: Date.now() }),
+      'utf8'
+    )
+  } catch {
+    /* ignore */
   }
 }
 

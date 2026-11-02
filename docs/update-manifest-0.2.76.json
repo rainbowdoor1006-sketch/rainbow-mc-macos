@@ -1,0 +1,10 @@
+{
+  "version": "0.2.76",
+  "url": "https://rainbowdoor.icu/launcher/RAINBOWMC-0.2.76-setup.exe",
+  "downloadUrl": "https://rainbowdoor.icu/launcher/RAINBOWMC-0.2.76-setup.exe",
+  "sha256": "9bc09d7222380b7d55b3b833606e3a0d84027badb03eadc79ae7611f44fa46c4",
+  "size": 81905922,
+  "notes": "修复启动器破坏性行为：显存/驱动兼容处理不再移动模组、不再写注册表，只写日志建议",
+  "mandatory": false,
+  "sig": "fCqcSggFCdM3Emx4qHJN4XifCzwCL/RB0vZXZZIBhO7uTx0XRuLGYkQpoohV8rcCBPL1uR9j+fhM7fNL5vUwDg=="
+}

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { paths } from '../paths'
-import { zhNameFor } from '@shared/zhnames'
+import { ZH_NAMES, zhNameFor } from '@shared/zhnames'
 
 /**
  * 中文名来源：MC百科（mcmod.cn，中文 MC 社区权威 wiki）。
@@ -157,6 +157,65 @@ export async function resolveZhBatch(
   })
   await Promise.all(workers)
   return out
+}
+
+/**
+ * 中文 → 英文查询词反查。
+ * 先查内置社区译名表（精准），再扫 mcmod 缓存里的「英文 → 中文」做包含匹配。
+ * 返回候选英文词，按长度短的优先（更可能是正式名称）。
+ */
+export function resolveEnglishQueries(query: string): string[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return []
+  const out = new Set<string>()
+
+  // 1. 内置表：slug 或中文名命中
+  for (const [slug, zh] of Object.entries(ZH_NAMES)) {
+    if (zh.toLowerCase().includes(q) || q.includes(zh.toLowerCase())) {
+      // slug 通常就是英文名（如 sodium / create）
+      out.add(slug)
+    }
+  }
+
+  // 2. 缓存表：英文标题 → 中文名
+  const c = loadCache()
+  for (const [en, zh] of Object.entries(c)) {
+    if (!zh) continue
+    if (zh.toLowerCase().includes(q) || q.includes(zh.toLowerCase())) out.add(en)
+  }
+
+  // 3. 常见「中文游戏术语 → 英文关键词」兜底（覆盖内置表没有的情况）
+  const TERMS: [RegExp, string][] = [
+    [/机械动力/, 'create'],
+    [/钠|渲染优化/, 'sodium'],
+    [/铷/, 'rubidium'],
+    [/嵌入|embeddium/, 'embeddium'],
+    [/光影/, 'shader'],
+    [/连接纹理|连通材质/, 'connected'],
+    [/小地图/, 'minimap|xaero|journeymap'],
+    [/物品栏|背包整理/, 'inventory|sorting'],
+    [/合成表|配方查看|nei|jei/, 'jei|recipe'],
+    [/护甲|装备/, 'armor'],
+    [/武器/, 'weapon'],
+    [/家具/, 'furniture'],
+    [/农夫|农业/, 'farmer|agriculture'],
+    [/水力|风力|发电/, 'energy|power'],
+    [/储物|存储|箱子/, 'storage|refined'],
+    [/传送|传点/, 'waystone|teleport'],
+    [/地图/, 'map'],
+    [/生物|怪物/, 'mob|creature'],
+    [/声音|音效/, 'sound'],
+    [/界面|UI/, 'ui|hud'],
+    [/汉化/, 'chinese|translation'],
+    [/互通|跨版本/, 'compat']
+  ]
+  for (const [re, en] of TERMS) {
+    if (re.test(q)) for (const part of en.split('|')) out.add(part)
+  }
+
+  const list = [...out].filter(Boolean)
+  // 短的优先（更接近真实项目名），限制 4 个避免请求过多
+  return list.sort((a, b) => a.length - b.length).slice(0, 4)
 }
 
 export function zhCacheSize(): number {

@@ -187,9 +187,9 @@ function extractPackContent(
   root: string,
   onFile: (done: number, total: number, name: string) => void,
   shouldAbort?: () => boolean
-): { extracted: number; mods: number } {
-  const KEEP = ['mods/', 'config/', 'defaultconfigs/', 'resourcepacks/', 'shaderpacks/', 'saves/', 'kubejs/', 'scripts/']
-  const KEEP_FILE = ['options.txt', 'servers.dat', 'optionsof.txt', 'shaderpacks.txt']
+): { extracted: number; mods: number; skipped: number; failed: number } {
+  const KEEP = ['mods/', 'config/', 'defaultconfigs/', 'resourcepacks/', 'shaderpacks/', 'saves/', 'kubejs/', 'scripts/', 'datapacks/', 'CustomSkinLoader/', 'PCL/']
+  const KEEP_FILE = ['options.txt', 'servers.dat', 'optionsof.txt', 'shaderpacks.txt', 'icon.png']
   const plan: { rel: string; entry: { getData(): Buffer; header: { size: number } } }[] = []
   let total = 0
   for (const e of zip.getEntries()) {
@@ -204,6 +204,7 @@ function extractPackContent(
   }
   let done = 0
   let mods = 0
+  let failed = 0
   for (const item of plan) {
     if (shouldAbort?.()) break
     const target = join(root, item.rel)
@@ -212,12 +213,13 @@ function extractPackContent(
       writeFileSync(target, item.entry.getData())
       if (item.rel.startsWith('mods/')) mods++
     } catch {
-      /* 单个文件失败不阻塞 */
+      // 不再静默：失败要计数，导入结束时会报给用户
+      failed++
     }
     done += (item.entry.header?.size as number) || 0
     onFile(done, total, item.rel)
   }
-  return { extracted: plan.length, mods }
+  return { extracted: plan.length, mods, skipped: 0, failed }
 }
 export async function importPack(
   packPath: string,
@@ -322,22 +324,38 @@ export async function importPack(
       // 大文件先下：否则最后只剩一个 300MB 的文件，看起来像"卡住不动"
       .sort((a, b) => (b.size || 0) - (a.size || 0))
     const totalBytes = tasks.reduce((s, t) => s + (t.size || 0), 0)
-    let doneBytes = 0
     if (tasks.length) {
       const { downloadAll } = await import('./http')
       try {
-        for (let i = 0; i < tasks.length; i += 16) {
-          if (shouldAbort?.() || signal?.aborted) throw new Error('已取消导入')
-          const slice = tasks.slice(i, i + 16)
-          await downloadAll(slice, {
-            concurrency: 16,
+        // 第一轮：一次性全量、24 并发
+        const failed = await downloadAll(tasks, {
+          concurrency: 24,
+          signal,
+          onProgress: (_d, _t, bytes) =>
+            onProgress?.({ stage: 'download', done: Math.min(bytes || 0, totalBytes), total: totalBytes }),
+          onLiveBytes: (bytes) =>
+            onProgress?.({ stage: 'download', done: Math.min(bytes || 0, totalBytes), total: totalBytes })
+        })
+        if (failed.length) {
+          // 第二轮：并发 12（不再降到 4），并且继续上报进度，避免界面卡在 100% 不动
+          let base = 0
+          try {
+            base = Math.max(
+              0,
+              totalBytes - failed.reduce((sum, t) => sum + (t.size || 0), 0)
+            )
+          } catch {
+            base = 0
+          }
+          onProgress?.({ stage: 'download', done: base, total: totalBytes })
+          await downloadAll(failed, {
+            concurrency: 12,
             signal,
             onProgress: (_d, _t, bytes) =>
-              onProgress?.({ stage: 'download', done: doneBytes + (bytes || 0), total: totalBytes })
+              onProgress?.({ stage: 'download', done: Math.min(base + (bytes || 0), totalBytes), total: totalBytes })
           })
-          doneBytes += slice.reduce((s, t) => s + (t.size || 0), 0)
-          onProgress?.({ stage: 'download', done: doneBytes, total: totalBytes })
         }
+        onProgress?.({ stage: 'download', done: totalBytes, total: totalBytes })
       } catch (e) {
         // 中止：把已经解压出来的半成品目录整套删掉
         try {
@@ -346,6 +364,27 @@ export async function importPack(
           /* ignore */
         }
         return { ok: false, message: e instanceof Error ? e.message : '已取消导入' }
+      }
+    }
+    // 安装对账：清单声明的文件是否都在、大小是否对、目录是否放对
+    {
+      const missing: string[] = []
+      for (const t of tasks) {
+        try {
+          const st = require('fs').statSync(t.dest)
+          if (!st.size) missing.push(t.dest)
+          if (t.size && st.size !== t.size) missing.push(t.dest)
+        } catch {
+          missing.push(t.dest)
+        }
+      }
+      if (missing.length) {
+        onProgress?.({
+          stage: 'download',
+          done: totalBytes,
+          total: totalBytes,
+          note: `⚠ ${missing.length} 个文件缺失或大小不符`
+        } as never)
       }
     }
     return { ok: true, projectId: project.id, name: project.name, mcVersion, loader, extractedMods: ex.mods }

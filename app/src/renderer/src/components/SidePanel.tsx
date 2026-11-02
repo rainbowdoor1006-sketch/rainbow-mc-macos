@@ -1,3 +1,4 @@
+import { QuoteBar } from './QuoteBar'
 import React, { useState } from 'react'
 import { useI18n } from '@/i18n'
 import type { AppState } from '@shared/types'
@@ -108,6 +109,7 @@ export function SidePanel({
       <div className="side-spacer" />
 
       <div className="launch">
+        <QuoteBar />
         {isLaunching ? (
           <button className="launch-main danger" onClick={onKill}>
             <IconStop />

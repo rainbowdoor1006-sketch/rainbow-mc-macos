@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'fs'
 import { dirname, join } from 'path'
+import { isMac } from './platform'
 
 /**
  * 数据根目录规则：
@@ -11,6 +12,9 @@ import { dirname, join } from 'path'
  * 会自动把旧数据迁移过来（存档、组件库、版本、账号、日志全带走）。
  */
 export function installRoot(): string | null {
+  // macOS：数据放 ~/Library/Application Support/RAINBOWMC，
+  // 绝不放进 .app 内部（签名会被破坏，更新也会覆盖数据）
+  if (isMac) return null
   if (!app.isPackaged) return null
   // 便携版（portable target）会解压到临时目录运行，真实位置在 PORTABLE_EXECUTABLE_DIR
   const portableDir = process.env['PORTABLE_EXECUTABLE_DIR']

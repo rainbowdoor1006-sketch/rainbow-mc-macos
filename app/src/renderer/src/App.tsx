@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Win95UpdateDialog, type Win95UpdateState } from '@/components/Win95UpdateDialog'
 import { I18nProvider, localeForRegion, useI18n } from '@/i18n'
 import type { AppSettings, AppState, LocaleCode, RegionCode } from '@shared/types'
 import { MainlandNotice, RegionPicker } from '@/components/RegionGate'
 import { AccountsDialog, LaunchError, LaunchOverlay, LocalLogin, LoginOffline, MsLogin } from '@/components/Dialogs'
+import { PreLaunchDialog } from '@/components/PreLaunchDialog'
+import { ConsolePanel } from '@/components/ConsolePanel'
 import { InstancePanel } from '@/components/InstancePanel'
 import { ProjectList } from '@/components/ProjectList'
 import { LoginGate } from '@/components/LoginGate'
@@ -29,18 +32,51 @@ export default function App(): React.ReactElement {
   const [page, setPage] = useState<Page>('launch')
   const [gate, setGate] = useState<'none' | 'picker' | 'notice'>('none')
   const [dialog, setDialog] = useState<Dialog>('none')
+  const [preProject, setPreProject] = useState<{ id: string; name: string } | null>(null)
+  const [showConsole, setShowConsole] = useState(false)
   const [launchingProjectId, setLaunchingProjectId] = useState<string | null>(null)
   const [running, setRunning] = useState<{ runId: string; projectId: string } | null>(null)
   const [lines, setLines] = useState<string[]>([])
   const [showLog, setShowLog] = useState(false)
-  const [error, setError] = useState<{ code: string; message?: string } | null>(null)
+  const [error, setError] = useState<{
+    code: string
+    message?: string
+    diagnosis?: {
+      code: string
+      category: string
+      title: string
+      confidence: 'high' | 'medium' | 'low'
+      evidence: string[]
+      steps: string[]
+      facts: string[]
+    } | null
+  } | null>(null)
   const [updateMode, setUpdateMode] = useState<UpdateMode | null>(null)
   const [updateLatest, setUpdateLatest] = useState<LatestInfoView | null>(null)
   const [updateLocal, setUpdateLocal] = useState('')
   const [updateProgress, setUpdateProgress] = useState<{ loaded: number; total: number } | null>(null)
   const [updateError, setUpdateError] = useState('')
+  const [win95, setWin95] = useState<Win95UpdateState | null>(null)
   const [currentVersion, setCurrentVersion] = useState('—')
   const linesRef = useRef<string[]>([])
+
+  // Ctrl+K 打开主控台
+  useEffect(() => {
+    // 更新完成提示改由安装窗口（PowerShell Win95 窗口）负责，
+    // 这里只消费标记，避免「先拉起启动器再弹窗」。
+    void window.api.update.consumeUpdated()
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setShowConsole((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // ESC 关闭当前弹出层（错误弹窗 / 更新弹窗 / 各种对话框 / 日志浮层）
   useEffect(() => {
@@ -77,7 +113,26 @@ export default function App(): React.ReactElement {
       }
     })
     if (window.api.uiFlags?.testErrorDialog) {
-      setError({ code: 'E2001', message: '游戏进程异常退出（测试弹窗）' })
+      setError({
+        code: 'E2100',
+        message: '游戏进程异常退出（测试弹窗）',
+        diagnosis: {
+          code: 'E2100',
+          category: 'env',
+          title: '内存不足 —— 分配 2 GB，这个整合包至少需要 17 GB',
+          confidence: 'high',
+          evidence: [
+            'java.lang.OutOfMemoryError: Java heap space',
+            'at cpw.mods.niofs.union.UnionFileSystem.byteChannel(UnionFileSystem.java:348)'
+          ],
+          steps: [
+            '进入「版本设置 → 内存」，把内存调到 17 GB（最多不超过物理内存的 60%）',
+            '同时关闭浏览器、直播、网盘同步等占内存的程序',
+            '改完直接重新启动，不需要重装整合包'
+          ],
+          facts: ['模组数量：564 个', '当前分配：2 GB', '该体量建议：16 GB 以上']
+        }
+      })
     }
     void window.api.getVersion().then(setCurrentVersion)
     void window.api.getState().then(async (s) => {
@@ -154,17 +209,30 @@ export default function App(): React.ReactElement {
     setGate('picker')
   }, [])
 
+  /** 真正发起启动（预估弹窗确认后调用） */
+  const startProject = useCallback(
+    async (projectId: string) => {
+      linesRef.current = []
+      setLines([])
+      setLaunchingProjectId(projectId)
+      setError(null)
+      setShowLog(true)
+      await window.api.mc.launch(projectId)
+    },
+    []
+  )
+
   const doLaunch = useCallback(async () => {
     if (!state) return
     const project = state.projects.find((p) => p.id === state.activeProjectId) ?? state.projects[0]
     if (!project) return
-    linesRef.current = []
-    setLines([])
-    setLaunchingProjectId(project.id)
-    setError(null)
-    setShowLog(true)
-    await window.api.mc.launch(project.id)
-  }, [state])
+    // 大整合包先做资源预估，避免 4GB 内存硬跑 500 模组直接 OOM
+    if (project.loader && project.loader !== 'vanilla') {
+      setPreProject(project)
+      return
+    }
+    await startProject(project.id)
+  }, [state, startProject])
 
   const doKill = useCallback(async () => {
     // 不传 runId：准备阶段也能取消，运行中则杀进程树
@@ -240,6 +308,23 @@ export default function App(): React.ReactElement {
               refresh()
               setDialog('instance')
             })
+          }}
+        />
+      )}
+      {showConsole && <ConsolePanel onClose={() => setShowConsole(false)} />}
+      {preProject && (
+        <PreLaunchDialog
+          projectId={preProject.id}
+          projectName={preProject.name}
+          onCancel={() => setPreProject(null)}
+          onOpenSettings={() => {
+            setPreProject(null)
+            setDialog('instance')
+          }}
+          onContinue={() => {
+            const id = preProject.id
+            setPreProject(null)
+            void startProject(id)
           }}
         />
       )}
@@ -331,12 +416,15 @@ export default function App(): React.ReactElement {
         <LaunchError
           errorCode={error.code}
           message={error.message}
+          diagnosis={error.diagnosis}
           onClose={() => setError(null)}
           onOpenLogs={() => {
             void window.api.openLogs()
           }}
         />
       )}
+
+      {win95 && <Win95UpdateDialog state={win95} />}
 
       {updateMode && (
         <UpdateDialog
@@ -349,17 +437,39 @@ export default function App(): React.ReactElement {
             if (!updateLatest) return
             void (async () => {
               setUpdateError('')
+              setUpdateMode(null)
+              const fromVer = String(updateLocal || currentVersion || '')
+              const toVer = updateLatest.version
+              setWin95({ from: fromVer, to: toVer, phase: 'download', progress: 0 })
               setUpdateProgress({ loaded: 0, total: updateLatest.size })
-              const off = window.api.update.onProgress((p) => setUpdateProgress(p))
+              const off = window.api.update.onProgress((p) => {
+                setUpdateProgress(p)
+                const total = p.total || updateLatest.size || 1
+                setWin95({
+                  from: fromVer,
+                  to: toVer,
+                  phase: 'download',
+                  progress: Math.min(1, (p.loaded || 0) / total)
+                })
+              })
               const r = await window.api.update.download(updateLatest)
               off()
               setUpdateProgress(null)
               if (!r.ok || !r.path) {
+                setWin95(null)
                 setUpdateError(r.message || '下载失败')
                 return
               }
-              const applied = await window.api.update.apply(r.path)
-              if (!applied.ok) setUpdateError(applied.message || '安装失败')
+              // 下载完成 → 交给安装窗口（它会显示 Win95 界面、播放安装音、跑安装、播完结束音再拉起）
+              setWin95(null)
+              // 把目标版本一起传下去（下次启动可提示「已更新到 x.y.z」）
+              const applied = await window.api.update.apply(r.path, updateLatest.version)
+              if (!applied.ok) {
+                setUpdateError(applied.message || '安装失败')
+                return
+              }
+              // 安装器接管：启动器会自行退出并自动拉起新版本
+              setUpdateError('')
             })()
           }}
           onSkip={() => {

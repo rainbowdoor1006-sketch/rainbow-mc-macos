@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
+import { createHash } from 'crypto'
 import { spawn } from 'child_process'
 import type { ComponentLoader } from '@shared/types'
 import { fetchJson } from './http'
@@ -231,7 +232,7 @@ function launcherProfiles(): void {
 async function runInstaller(
   jarPath: string,
   javaMajor: number,
-  onProgress?: (msg: string) => void,
+  onProgress?: (msg: string, doneBytes?: number, totalBytes?: number) => void,
   shouldAbort?: () => boolean
 ): Promise<void> {
   let javaExe = findInstalledJava(javaMajor)
@@ -242,7 +243,12 @@ async function runInstaller(
   launcherProfiles()
   const TIMEOUT_MS = 12 * 60 * 1000
   await new Promise<void>((resolve, reject) => {
-    const proc = spawn(javaExe!, ['-jar', jarPath, '--installClient', paths.root()], {
+    const JVM_ARGS = [
+      '-Dsun.net.client.defaultConnectTimeout=15000',
+      '-Dsun.net.client.defaultReadTimeout=15000',
+      '-Djava.net.preferIPv4Stack=true'
+    ]
+    const proc = spawn(javaExe!, [...JVM_ARGS, '-jar', jarPath, '--installClient', paths.root()], {
       cwd: runtimeDir(),
       windowsHide: true
     })
@@ -265,7 +271,39 @@ async function runInstaller(
       }
       done(new Error(`安装器超时（12 分钟），已终止。最后输出：${lastLine}`))
     }, TIMEOUT_MS)
+    // 停滞检测：安装器联网会无响应地挂住。90 秒既没新文件也没新输出 → 判定卡死
+    let lastSig = ''
+    let stallSince = Date.now()
+    const libDir = librariesDir()
+    const dirSig = (dir: string): string => {
+      try {
+        const fs = require('fs') as typeof import('fs')
+        let n = 0
+        let bytes = 0
+        const walk = (d: string, depth: number): void => {
+          if (depth > 3) return
+          for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+            const p = `${d}/${e.name}`
+            if (e.isDirectory()) walk(p, depth + 1)
+            else {
+              n++
+              try {
+                bytes += fs.statSync(p).size
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
+        walk(dir, 0)
+        return `${n}:${bytes}`
+      } catch {
+        return ''
+      }
+    }
+
     // 每秒检查一次取消标记：点「停止安装」要能立刻杀掉安装器进程
+    let lastOutputAt = Date.now()
     const watch = setInterval(() => {
       if (shouldAbort?.()) {
         try {
@@ -274,14 +312,35 @@ async function runInstaller(
           /* ignore */
         }
         done(new Error('已取消导入'))
+        return
       }
-    }, 1000)
+      // 停滞检测：libraries 目录 90 秒没有增长，且 90 秒没有新的安装器输出 → 判定卡死
+      const sig = dirSig(libDir)
+      if (sig !== lastSig) {
+        lastSig = sig
+        stallSince = Date.now()
+      }
+      if (lastOutputAt > stallSince) stallSince = lastOutputAt
+      if (Date.now() - stallSince > 90_000) {
+        try {
+          proc.kill()
+        } catch {
+          /* ignore */
+        }
+        done(
+          new Error(
+            `安装器卡死了（90 秒无任何进展），已终止。最后输出：${lastLine || '(无)'}`
+          )
+        )
+      }
+    }, 2000)
     proc.stdout?.on('data', (d: Buffer) => {
       const text = d.toString('utf8')
       out += text
       const lines = text.split(/\r?\n/).filter((x) => x.trim())
       if (lines.length) {
         lastLine = lines[lines.length - 1].trim().slice(0, 120)
+        lastOutputAt = Date.now()
         onProgress?.(lastLine)
       }
     })
@@ -306,15 +365,41 @@ function snapshotVersions(): Set<string> {
 }
 
 async function downloadInstaller(urls: string[], dest: string, label: string): Promise<void> {
+  let lastErr = ''
   for (const url of urls) {
-    const failed = await downloadAll([{ url, dest }], { concurrency: 1 })
-    if (!failed.length) return
+    try {
+      // 先取官方 .sha1（maven 都提供），拿不到就退化为「只校验 TLS」
+      let expected = ''
+      try {
+        const res = await fetch(`${url}.sha1`, { signal: AbortSignal.timeout(15000) })
+        if (res.ok) expected = (await res.text()).trim().split(/\s+/)[0].toLowerCase()
+      } catch {
+        /* sha1 取不到，继续 */
+      }
+      const failed = await downloadAll([{ url, dest }], { concurrency: 1 })
+      if (failed.length) continue
+      if (expected) {
+        const got = createHash('sha1').update(readFileSync(dest)).digest('hex').toLowerCase()
+        if (got !== expected) {
+          try {
+            rmSync(dest, { force: true })
+          } catch {
+            /* ignore */
+          }
+          lastErr = `${label}安装器校验失败（sha1 不匹配）`
+          continue
+        }
+      }
+      return
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e)
+    }
   }
-  throw new Error(`${label}安装器下载失败（官方源与镜像都不可用）`)
+  throw new Error(`${label}安装器下载失败（${lastErr || '官方源与镜像都不可用'}）`)
 }
 
 /** 在 versions 目录里找已经装好的加载器版本（名字里同时含 mcVersion 和关键字） */
-function findInstalledLoaderVersion(mcVersion: string, keyword: string): string | null {
+export function findInstalledLoaderVersion(mcVersion: string, keyword: string): string | null {
   try {
     const dirs = readdirSync(versionsDir()).filter(
       (d) => existsSync(join(versionsDir(), d, `${d}.json`))
@@ -330,7 +415,7 @@ function findInstalledLoaderVersion(mcVersion: string, keyword: string): string 
 /** 用 BMCLAPI 的 maven 镜像把 Forge 安装器要用的库先下好，安装器就会跳过这些下载 */
 async function prefetchForgeLibraries(
   jarPath: string,
-  onProgress?: (msg: string) => void,
+  onProgress?: (msg: string, doneBytes?: number, totalBytes?: number) => void,
   shouldAbort?: () => boolean
 ): Promise<void> {
   try {
@@ -352,14 +437,24 @@ async function prefetchForgeLibraries(
         dest: join(librariesDir(), path)
       }
     })
-    let done = 0
-    onProgress?.(`预取 Forge 依赖 0/${tasks.length}`)
-    for (let i = 0; i < tasks.length; i += 16) {
-      if (shouldAbort?.()) return
-      await downloadAll(tasks.slice(i, i + 16), { concurrency: 16 })
-      done = Math.min(i + 16, tasks.length)
-      onProgress?.(`预取 Forge 依赖 ${done}/${tasks.length}`)
+    // 一次性铺开、并发 16，并把字节数报给界面（否则界面只能显示 0 B/s，看起来像卡死）
+    const total = tasks.length
+    onProgress?.(`预取 Forge 依赖 0/${total}`)
+    try {
+      await downloadAll(tasks, {
+        concurrency: 16,
+        signal: AbortSignal.timeout(180000),
+        onProgress: (d, _t, bytes) => {
+          onProgress?.(`预取 Forge 依赖 ${d}/${total}`, bytes, 0)
+        },
+        onLiveBytes: (bytes) => {
+          onProgress?.(`预取 Forge 依赖 ${total} 个中…`, bytes, 0)
+        }
+      })
+    } catch {
+      /* 预取失败不影响主流程，安装器会自己下 */
     }
+    onProgress?.(`预取完成 ${total}/${total}`)
   } catch {
     /* 预取失败不影响主流程，安装器会自己下 */
   }
@@ -367,7 +462,7 @@ async function prefetchForgeLibraries(
 export async function installForge(
   mcVersion: string,
   forgeVersion: string,
-  onProgress?: (msg: string) => void,
+  onProgress?: (msg: string, doneBytes?: number, totalBytes?: number) => void,
   shouldAbort?: () => boolean
 ): Promise<{ versionId: string }> {
   const full = `${mcVersion}-${forgeVersion}`
@@ -387,7 +482,23 @@ export async function installForge(
   await prefetchForgeLibraries(jar, onProgress, shouldAbort)
   const before = snapshotVersions()
   onProgress?.('运行 Forge 安装器（需要一点时间）')
-  await runInstaller(jar, major, onProgress, shouldAbort)
+  try {
+    await runInstaller(jar, major, onProgress, shouldAbort)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (/卡死|超时/.test(msg) && !shouldAbort?.()) {
+      // 卡死多半是安装器联网卡住：重新预取依赖后再试一次
+      onProgress?.('安装器卡住，正在重试…')
+      try {
+        await prefetchForgeLibraries(jar, onProgress, shouldAbort)
+      } catch {
+        /* ignore */
+      }
+      await runInstaller(jar, major, onProgress, shouldAbort)
+    } else {
+      throw e
+    }
+  }
   const after = snapshotVersions()
   const created = [...after].filter((v) => !before.has(v) && v !== '')
   // 已经装过的情况下 created 是空的，必须回查 versions 目录，否则会返回不存在的 id

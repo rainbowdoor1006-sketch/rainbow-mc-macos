@@ -18,6 +18,7 @@ export function Settings({
   onRefresh: () => void
 }): React.ReactElement {
   const { t } = useI18n()
+  const [mirrorMsg, setMirrorMsg] = React.useState('')
   const appearance = settings.appearance
   const [cropData, setCropData] = useState('')
   const [bgBusy, setBgBusy] = useState(false)
@@ -105,6 +106,23 @@ export function Settings({
               <option value="official">{t('settings.official')}</option>
               <option value="mirror">{t('settings.mirror')}</option>
             </select>
+              <button
+                className="btn sm"
+                style={{ marginLeft: 8 }}
+                onClick={() => {
+                  setMirrorMsg('测速中…')
+                  void window.api.mirror.test().then((r) => {
+                    const rows = (r.results as { label: string; latencyMs: number; speedMbs: number; ok: boolean }[]) || []
+                    const txt = rows
+                      .map((x) => `${x.label}：${x.ok ? x.latencyMs + 'ms / ' + x.speedMbs + 'MB/s' : '不可用'}`)
+                      .join('  ·  ')
+                    setMirrorMsg(txt + `　推荐：${r.recommend === 'bmclapi' ? 'BMCLAPI' : '官方'}`)
+                  })
+                }}
+              >
+                测速
+              </button>
+              {mirrorMsg && <div className="dim" style={{ fontSize: 11.5, marginTop: 6 }}>{mirrorMsg}</div>}
           </div>
 
           <div className="field">

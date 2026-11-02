@@ -1,0 +1,89 @@
+name: mac-build
+
+# 在 GitHub 提供的 macOS 机器上打 dmg（本地没有 Mac 也能出包）
+# 公开仓库的 macOS runner 免费，额度不限
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    # macos-14 = Apple Silicon（arm64），electron-builder 的 --universal 会同时取 x64 的 Electron
+    runs-on: macos-14
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci || npm install
+
+      - name: 类型检查
+        run: npx tsc --noEmit
+        continue-on-error: true
+
+      - name: 构建并打 dmg（universal）
+        env:
+          # ad-hoc 签名，不需要任何 Apple 账号
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist:mac
+
+      - name: 检查签名结果
+        run: |
+          APP=$(find release-mac -maxdepth 3 -name '*.app' -type d | head -n 1)
+          echo "APP=$APP"
+          codesign -dv --verbose=2 "$APP" 2>&1 | head -n 20 || true
+          ls -lh release-mac/*.dmg release-mac/*.zip 2>/dev/null || true
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: rainbowmc-macos
+          path: |
+            app/release-mac/*.dmg
+            app/release-mac/*.zip
+          if-no-files-found: warn
+          retention-days: 30
+
+  release:
+    # 打 tag（v*）时自动发 Release，附上 dmg 与 sha256
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rainbowmc-macos
+          path: dist
+
+      - name: 生成 sha256
+        run: |
+          cd dist
+          for f in *.dmg *.zip; do [ -f "$f" ] && shasum -a 256 "$f" >> SHA256SUMS.txt; done
+          cat SHA256SUMS.txt || true
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          generate_release_notes: true

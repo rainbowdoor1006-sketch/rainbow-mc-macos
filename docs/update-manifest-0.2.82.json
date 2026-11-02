@@ -1,0 +1,10 @@
+{
+  "version": "0.2.82",
+  "url": "https://rainbowdoor.icu/launcher/RAINBOWMC-0.2.82-setup.exe",
+  "downloadUrl": "https://rainbowdoor.icu/launcher/RAINBOWMC-0.2.82-setup.exe",
+  "sha256": "e45c30af8a738c68f5a203afa5c9f0e2bbf4480db7c0434ca0b9fc2fae260774",
+  "size": 81908847,
+  "notes": "修复导入进度回退与加载器卡死",
+  "mandatory": false,
+  "sig": "wNRLAWL6cGJj6u5Ka3TN1wyoDiA09fGd3VCD9NYJsMLndmNPLGe/FC1AXEul2c++I2aOQ1elrxPmSRrhHB1ZCA=="
+}

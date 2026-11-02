@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RAINBOW MC · 开源 Minecraft 启动器</title>
+  </head>
+  <body style="margin:0;padding:0;background:#e9f1f5;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#e9f1f5;">
+      <tr>
+        <td align="center" style="padding:36px 12px;">
+          <!-- 冷白玻璃板 -->
+          <table
+            role="presentation"
+            width="600"
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+            style="width:600px;max-width:600px;background:#f7fbfd;background-image:linear-gradient(165deg,#ffffff 0%,#f2f8fb 100%);border:1px solid rgba(255,255,255,0.9);border-radius:20px;"
+          >
+            <tr>
+              <td style="height:2px;background:#2bb3a3;background-image:linear-gradient(90deg,#2bb3a3 0%,#4a86e8 100%);font-size:0;line-height:0;">&nbsp;</td>
+            </tr>
+
+            <!-- LOGO -->
+            <tr>
+              <td align="center" style="padding:34px 40px 6px 40px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+                  <tr>
+                    <td
+                      width="76"
+                      height="76"
+                      align="center"
+                      valign="middle"
+                      bgcolor="#ffffff"
+                      style="width:76px;height:76px;background:#ffffff;border:1px solid #dbe8ef;border-radius:18px;"
+                    >
+                      <img
+                        src="https://rainbowdoor.icu/launcher/logo-256.png"
+                        width="54"
+                        height="54"
+                        alt=""
+                        style="display:block;width:54px;height:54px;border:0;outline:none;text-decoration:none;"
+                      />
+                    </td>
+                  </tr>
+                </table>
+                <div style="height:14px;font-size:0;line-height:0;">&nbsp;</div>
+                <div style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:23px;line-height:30px;font-weight:700;color:#12222b;letter-spacing:0.4px;">
+                  RAINBOW MC
+                </div>
+                <div style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:12.5px;line-height:19px;color:#6a828f;padding-top:5px;">
+                  开源 Minecraft 启动器 · Electron + React · MIT
+                </div>
+              </td>
+            </tr>
+
+            <!-- 一行主张 -->
+            <tr>
+              <td align="center" style="padding:18px 40px 0 40px;">
+                <div style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:16px;line-height:26px;color:#12222b;font-weight:600;">
+                  装上就能玩：不用配 Java，不用手动装加载器
+                </div>
+              </td>
+            </tr>
+
+            <!-- 卖点（细线分隔，不用卡片堆） -->
+            <tr>
+              <td style="padding:20px 40px 4px 40px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td style="padding:11px 0;border-top:1px solid #e2edf2;">
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#12222b;font-weight:600;">一键安装加载器</span>
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#5c7683;">
+                        &nbsp;Forge / NeoForge / Fabric / Quilt，依赖自动补齐</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:11px 0;border-top:1px solid #e2edf2;">
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#12222b;font-weight:600;">整合包拖进去就导入</span>
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#5c7683;">
+                        &nbsp;566 个模组 / 1.43 GB 实测 5.1 分钟</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:11px 0;border-top:1px solid #e2edf2;">
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#12222b;font-weight:600;">崩溃直接给结论</span>
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#5c7683;">
+                        &nbsp;读日志判定内存 / 前置 / 驱动 / 存档问题，共 29 类</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:11px 0;border-top:1px solid #e2edf2;">
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#12222b;font-weight:600;">房间码联机</span>
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#5c7683;">
+                        &nbsp;不用买服务器，一条邀请码就能一起玩</span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:11px 0;border-top:1px solid #e2edf2;border-bottom:1px solid #e2edf2;">
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#12222b;font-weight:600;">启动前体检</span>
+                      <span style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:13px;line-height:21px;color:#5c7683;">
+                        &nbsp;估算内存 / 显存 / CPU，还能给模组做静态检查</span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- 代码 -->
+            <tr>
+              <td style="padding:22px 40px 0 40px;">
+                <div style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:11.5px;line-height:18px;color:#7d96a2;padding-bottom:8px;">
+                  核心实现（节选 · 全部代码开源）
+                </div>
+                <table
+                  role="presentation"
+                  width="100%"
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="background:#f1f7fa;border:1px solid #dfebf1;border-radius:11px;"
+                >
+                  <tr>
+                    <td style="padding:13px 15px;font-family:Consolas,'Courier New',monospace;font-size:11px;line-height:17px;color:#274b5a;white-space:pre;">
+<span style="color:#93aab4;">// 整合包导入：解析与下载流水线并行</span>
+<span style="color:#2f6fb5;">const</span> workers = [
+  ...range(<span style="color:#c0703c;">16</span>).map(resolveWorker),
+  ...range(<span style="color:#c0703c;">24</span>).map(downloadWorker)
+]
+<span style="color:#2f6fb5;">await</span> Promise.all(workers)  <span style="color:#93aab4;">// → 5.1 分钟</span></td>
+                  </tr>
+                </table>
+
+                <div style="height:8px;font-size:0;line-height:0;">&nbsp;</div>
+
+                <table
+                  role="presentation"
+                  width="100%"
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="background:#f1f7fa;border:1px solid #dfebf1;border-radius:11px;"
+                >
+                  <tr>
+                    <td style="padding:13px 15px;font-family:Consolas,'Courier New',monospace;font-size:11px;line-height:17px;color:#274b5a;white-space:pre;">
+<span style="color:#93aab4;">// 崩溃判定：不给可能性，直接给结论</span>
+<span style="color:#2f6fb5;">if</span> (<span style="color:#1f8f7d;">/OutOfMemoryError|heap space/</span>.test(log))
+  <span style="color:#2f6fb5;">return</span> verdict(<span style="color:#c0703c;">`内存不足：分配 ${alloc} GB，至少需要 ${need} GB`</span>)</td>
+                  </tr>
+                </table>
+
+                <div style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:11.5px;line-height:19px;color:#7d96a2;padding-top:14px;">
+                  仅保留离线登录，不含任何在线账号与授权实现；代码可审计、可二次开发。
+                </div>
+              </td>
+            </tr>
+
+            <!-- CTA -->
+            <tr>
+              <td align="center" style="padding:24px 40px 8px 40px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center" bgcolor="#2bb3a3" style="border-radius:11px;background:#2bb3a3;background-image:linear-gradient(90deg,#2bb3a3 0%,#4a86e8 100%);">
+                      <a
+                        href="https://github.com/rainbowdoor1006-sketch"
+                        target="_blank"
+                        style="display:inline-block;padding:13px 32px;font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:14px;line-height:20px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:11px;"
+                        >前往 GitHub →</a
+                      >
+                    </td>
+                  </tr>
+                </table>
+                <div style="height:12px;font-size:0;line-height:0;">&nbsp;</div>
+                <div style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:12px;line-height:19px;color:#6a828f;">
+                  安装包：
+                  <a href="https://github.com/rainbowdoor1006-sketch/rainbow-mc/releases/latest" target="_blank" style="color:#1f8f7d;text-decoration:none;">Releases</a>
+                  &nbsp;·&nbsp; 源码：
+                  <a href="https://github.com/rainbowdoor1006-sketch/rainbow-mc" target="_blank" style="color:#1f8f7d;text-decoration:none;">rainbow-mc</a>
+                </div>
+              </td>
+            </tr>
+
+            <!-- 页脚 -->
+            <tr>
+              <td align="center" style="padding:26px 40px 30px 40px;">
+                <div style="height:1px;background:#e2edf2;font-size:0;line-height:0;">&nbsp;</div>
+                <div style="height:14px;font-size:0;line-height:0;">&nbsp;</div>
+                <div style="font-family:'Segoe UI','Microsoft YaHei',Arial,sans-serif;font-size:10.5px;line-height:17px;color:#8aa1ac;">
+                  RAINBOW MC · Windows 10 / 11 64 位 · MIT 许可<br />
+                  本项目与 Mojang Studios / Microsoft 无关，Minecraft 是 Mojang Studios 的商标。<br />
+                  不想再收到相关邮件，回复「退订」即可。
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

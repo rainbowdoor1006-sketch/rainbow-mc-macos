@@ -69,6 +69,12 @@ export interface GameProject {
   loaderVersion?: string
   createdAt: number
   lastPlayedAt?: number
+  /** 上次启动耗时（毫秒，点击启动到进入主菜单） */
+  lastBootMs?: number
+  /** 历史最快启动耗时 */
+  bestBootMs?: number
+  /** 累计启动次数 */
+  launchCount?: number
   /** 该项目目录名（相对 games/） */
   dir: string
   /** —— 实例级设置（PCL 的「版本设置」） —— */

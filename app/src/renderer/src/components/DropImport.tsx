@@ -127,7 +127,8 @@ export function DropImport({ onImported }: { onImported: () => void }): React.Re
 
   // 进度界面（全屏）
   if (running) {
-    const indeterminate = stage === 'analyze' || stage === 'loader'
+    // loader 阶段现在也会上报字节数：有 total 就显示真实进度，没有才用不确定样式
+    const indeterminate = stage === 'analyze' || (stage === 'loader' && !(total > 0))
     const pct = !indeterminate && total > 0 ? Math.min(100, (done / total) * 100) : 0
     const stageText =
       stage === 'analyze'
@@ -172,7 +173,9 @@ export function DropImport({ onImported }: { onImported: () => void }): React.Re
               <span className="mono dim">
                 {indeterminate ? t('drop.working') : `${fmt(done)} / ${fmt(total)}`}
               </span>
-              <span className="mono dim">{fmt(speed)}/s</span>
+              <span className="mono dim">
+                {speed > 0 ? `${fmt(speed)}/s` : t('drop.working')}
+              </span>
             </div>
             <button className="btn" style={{ marginTop: 26 }} onClick={() => setConfirmClose(true)}>
               {t('drop.stop')}
